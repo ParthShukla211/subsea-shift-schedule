@@ -67,17 +67,19 @@ def get_gsheet_client():
 
 def save_schedule_to_db():
     client = get_gsheet_client()
-    sheet = client.open("Subsea_Schedule_DB").sheet1
+    # PASTE YOUR ID HERE inside the quotes
+    sheet = client.open_by_key("1KD0tl3MjCumuovdLaN_hS2f_dDBZKNXyuDOUiuKV-jk").sheet1
     sheet.clear()
     df_to_save = st.session_state.schedule.copy()
-    df_to_save['Date'] = df_to_save['Date'].astype(str) # Convert Date to string for JSON Google Sheets
+    df_to_save['Date'] = df_to_save['Date'].astype(str) 
     data_to_write = [df_to_save.columns.values.tolist()] + df_to_save.values.tolist()
     sheet.update(range_name='A1', values=data_to_write)
 
 def load_or_generate_schedule():
     try:
         client = get_gsheet_client()
-        sheet = client.open("Subsea_Schedule_DB").sheet1
+        # PASTE YOUR ID HERE inside the quotes
+        sheet = client.open_by_key("1KD0tl3MjCumuovdLaN_hS2f_dDBZKNXyuDOUiuKV-jk").sheet1
         data = sheet.get_all_records()
         if not data:
             raise ValueError("Sheet is empty")
@@ -87,8 +89,6 @@ def load_or_generate_schedule():
     except Exception as e:
         generate_schedule()
         save_schedule_to_db()
-        st.error(f"SAVE ERROR: {e}")
-        st.stop()
 
 def get_shift_for_date(curr_date, week_off_day):
     wo_idx = WEEK_DAYS.index(week_off_day)
