@@ -66,7 +66,7 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.markdown("<h1 style='text-align: center; color: #1E3A8A; margin-top: 8vh; font-size: 3rem;'>🌊 Subsea Panel Manpower Management 🎛️</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color: #1E3A8A; margin-top: 8vh; font-size: 3rem;'>🎛️ Subsea Panel Manpower Management</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #64748B; font-size: 1.1rem; margin-bottom: 2rem;'>Secure Operational Dashboard</p>", unsafe_allow_html=True)
     
     col_spacer1, col_login, col_spacer2 = st.columns([1, 1.2, 1])
@@ -339,7 +339,7 @@ with st.sidebar:
         st.error(f"**🟣 Active: Shift {active_s} (UNMANNED)**")
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("### 🌊 Navigation")
+    st.markdown("### 🧭 Navigation")
     
     page = st.radio("Select Module", ["📅 Monthly Calendar", "🔄 Shift Exchange", "🏖️ Leave Planner", "🗓️ Shift Planner", "👥 Manpower Roster"], label_visibility="collapsed")
     
