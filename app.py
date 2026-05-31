@@ -66,7 +66,7 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.markdown("<h1 style='text-align: center; color: #1E3A8A; margin-top: 8vh; font-size: 3rem;'>🎛️ Subsea Panel Manpower Management</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color: #1E3A8A; margin-top: 8vh; font-size: 3rem;'>🌊 Subsea Panel Manpower Management 🎛️</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #64748B; font-size: 1.1rem; margin-bottom: 2rem;'>Secure Operational Dashboard</p>", unsafe_allow_html=True)
     
     col_spacer1, col_login, col_spacer2 = st.columns([1, 1.2, 1])
@@ -339,7 +339,7 @@ with st.sidebar:
         st.error(f"**🟣 Active: Shift {active_s} (UNMANNED)**")
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("### 🧭 Navigation")
+    st.markdown("### 🌊 Navigation")
     
     page = st.radio("Select Module", ["📅 Monthly Calendar", "🔄 Shift Exchange", "🏖️ Leave Planner", "🗓️ Shift Planner", "👥 Manpower Roster"], label_visibility="collapsed")
     
@@ -661,7 +661,7 @@ elif page == "🏖️ Leave Planner":
 # ---------------------------------------------------------
 elif page == "🗓️ Shift Planner":
     st.markdown("<h1 style='color: #1E3A8A; margin-bottom: 0;'>🗓️ Monthly Master Shift Planner</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color: #64748B;'>Manually override and design the shift matrix for an entire month.</p>", unsafe_allow_html=True)
+    st.markdown("<p style='color: #64748B;'>Dates flow vertically. Assign primary and double shifts manually for the entire month.</p>", unsafe_allow_html=True)
 
     col_y, col_m, _ = st.columns([1, 1, 2])
     plan_year = col_y.selectbox("Select Year", range(ist_now.year - 1, ist_now.year + 2), index=1, key="plan_y")
@@ -677,37 +677,76 @@ elif page == "🗓️ Shift Planner":
     if month_data.empty:
         st.warning("No data generated for this month yet.")
     else:
-        # Sort chronologically so dates flow downwards naturally
+        # Custom aggregation to combine multiple shifts into readable tags (A+B, B+C, etc)
+        def agg_shifts(s):
+            shifts = set(s)
+            if 'A' in shifts and 'B' in shifts: return 'A+B'
+            if 'B' in shifts and 'C' in shifts: return 'B+C'
+            if 'C' in shifts and 'A' in shifts: return 'C+A'
+            if 'Leave' in shifts: return 'Leave'
+            if 'WO' in shifts: return 'WO'
+            return s.iloc[0] if not s.empty else 'Unmanned'
+
         month_data = month_data.sort_values('Date')
         
         # Pivot operation: Dates become rows, Names become columns
-        pivot_df = month_data.pivot_table(index='Date', columns='Name', values='Shift', aggfunc='first').reset_index()
+        pivot_df = month_data.pivot_table(index='Date', columns='Name', values='Shift', aggfunc=agg_shifts).reset_index()
+        
+        # Pre-compute Health Status for each Day
+        status_list = []
+        for d_obj in pivot_df['Date']:
+            day_data = month_data[month_data['Date'] == d_obj]
+            day_status = "✅ OK"
+            for s in ['A', 'B', 'C']:
+                shift_personnel = day_data[day_data['Shift'] == s]
+                ok, msg = check_shift_health(shift_personnel)
+                if not ok:
+                    day_status = "⚠️ ISSUE"
+                    break
+            status_list.append(day_status)
+        
+        pivot_df.insert(1, 'Status', status_list)
         
         # Build strict column configurations
         col_cfg = {
-            "Date": st.column_config.DateColumn("Date", disabled=True, format="DD MMM (ddd)")
+            "Date": st.column_config.DateColumn("Date", disabled=True, format="DD MMM (ddd)"),
+            "Status": st.column_config.TextColumn("Day Status", disabled=True)
         }
         
         # Dynamically append each engineer as a selectable column
-        for name in pivot_df.columns: 
-            if name != "Date":
-                role_val = st.session_state.manpower.loc[st.session_state.manpower['Name'] == name, 'Role'].values[0]
-                role_abbr = role_val[:2].upper()
-                col_cfg[name] = st.column_config.SelectboxColumn(
-                    f"{name} ({role_abbr})", 
-                    options=['A', 'B', 'C', 'WO', 'Leave'],
-                    required=True,
-                    width="small"
-                )
+        for name in pivot_df.columns[2:]: 
+            role_val = st.session_state.manpower.loc[st.session_state.manpower['Name'] == name, 'Role'].values[0]
+            role_abbr = role_val[:2].upper()
+            col_cfg[name] = st.column_config.SelectboxColumn(
+                f"{name} ({role_abbr})", 
+                options=['A', 'B', 'C', 'WO', 'Leave', 'A+B', 'B+C', 'C+A'],
+                required=True,
+                width="small"
+            )
         
         st.markdown("### Interactive Planning Grid")
-        st.caption("Dates flow vertically. Edit the shifts directly in the grid below. Grid operations support 1 shift per engineer per day. Ensure any subsequent OT or double-shifts are managed via the 'Shift Exchange' module.")
+        st.caption("The 'Day Status' column calculates health based on the currently saved database. Changing drop-downs will not update the status until you click 'Commit Master Plan'.")
         
         edited_pivot = st.data_editor(pivot_df, column_config=col_cfg, use_container_width=True, hide_index=True)
         
         if st.button("Commit Master Plan", type="primary"):
             # Pandas melt operation to return the vertical matrix back to transactional format
-            melted = edited_pivot.melt(id_vars=['Date'], var_name='Name', value_name='Shift')
+            melted = edited_pivot.melt(id_vars=['Date', 'Status'], var_name='Name', value_name='Shift')
+            melted = melted.drop(columns=['Status'])
+            
+            # Expansion Engine: Safely split double shifts back into multiple mathematical rows
+            expanded_rows = []
+            for _, row in melted.iterrows():
+                shifts = []
+                if row['Shift'] == 'A+B': shifts = ['A', 'B']
+                elif row['Shift'] == 'B+C': shifts = ['B', 'C']
+                elif row['Shift'] == 'C+A': shifts = ['C', 'A']
+                else: shifts = [row['Shift']]
+                
+                for s in shifts:
+                    expanded_rows.append({'Date': row['Date'], 'Name': row['Name'], 'Shift': s})
+                    
+            melted = pd.DataFrame(expanded_rows)
             
             # Re-map the roles since they were absorbed during the pivot
             role_map = dict(zip(st.session_state.manpower['Name'], st.session_state.manpower['Role']))
@@ -724,7 +763,7 @@ elif page == "🗓️ Shift Planner":
             st.session_state.schedule = st.session_state.schedule.sort_values(by=['Date', 'Name']).reset_index(drop=True)
             
             save_data_to_db()
-            st.success(f"Master plan for {plan_month_name} {plan_year} successfully committed to the database!")
+            st.success(f"Master plan for {plan_month_name} {plan_year} successfully committed to the database! The Calendar and Day Statuses have been updated.")
             st.rerun()
 
 # ---------------------------------------------------------
