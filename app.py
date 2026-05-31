@@ -108,6 +108,62 @@ def generate_schedule():
             schedule_data.append({'Date': d, 'Name': row['Name'], 'Role': row['Role'], 'Shift': shift_assigned})
     st.session_state.schedule = pd.DataFrame(schedule_data)
 
+def sync_roster_updates(old_df, new_df):
+    """Safely updates the schedule based on roster changes without wiping saved leaves/swaps."""
+    curr_sched = st.session_state.schedule.copy()
+    today = datetime.date.today()
+    
+    old_wo_map = dict(zip(old_df['Name'], old_df['Week_Off']))
+    
+    # 1. Remove deleted personnel
+    valid_names = new_df['Name'].tolist()
+    curr_sched = curr_sched[curr_sched['Name'].isin(valid_names)]
+    
+    # 2. Update Roles
+    role_map = dict(zip(new_df['Name'], new_df['Role']))
+    curr_sched['Role'] = curr_sched['Name'].map(role_map)
+    
+    # 3. Add new personnel
+    old_names = old_df['Name'].tolist()
+    added_names = [n for n in valid_names if n not in old_names]
+    
+    if added_names:
+        new_users_df = new_df[new_df['Name'].isin(added_names)]
+        start_date = datetime.date(today.year - 1, 1, 1) 
+        dates = [start_date + datetime.timedelta(days=x) for x in range(1095)]
+        
+        new_rows = []
+        for d in dates:
+            for _, row in new_users_df.iterrows():
+                new_rows.append({
+                    'Date': d, 
+                    'Name': row['Name'], 
+                    'Role': row['Role'], 
+                    'Shift': get_shift_for_date(d, row['Week_Off'])
+                })
+        curr_sched = pd.concat([curr_sched, pd.DataFrame(new_rows)], ignore_index=True)
+        
+    # 4. Handle Week_Off changes without destroying manual swaps/leaves
+    changed_wo_names = []
+    for _, row in new_df.iterrows():
+        name = row['Name']
+        if name in old_names and row['Week_Off'] != old_wo_map.get(name):
+            changed_wo_names.append((name, old_wo_map[name], row['Week_Off']))
+            
+    if changed_wo_names:
+        for index, row in curr_sched.iterrows():
+            if row['Date'] >= today:
+                for name, old_wo, new_wo in changed_wo_names:
+                    if row['Name'] == name:
+                        # Only update if the current shift is their OLD baseline (meaning they haven't booked leave)
+                        old_baseline_shift = get_shift_for_date(row['Date'], old_wo)
+                        if row['Shift'] == old_baseline_shift:
+                            new_baseline_shift = get_shift_for_date(row['Date'], new_wo)
+                            curr_sched.at[index, 'Shift'] = new_baseline_shift
+                            
+    curr_sched['Date'] = pd.to_datetime(curr_sched['Date']).dt.date
+    return curr_sched
+
 def load_or_generate_data():
     client = get_gsheet_client()
     sheet = client.open_by_key(SPREADSHEET_ID)
@@ -170,7 +226,6 @@ def determine_day_status(day_data, curr_date):
     if not is_modified:
         for _, row in day_data.iterrows():
             if row['Shift'] not in ['Leave', 'WO']:
-                # Safely get expected shift
                 manpower_row = st.session_state.manpower[st.session_state.manpower['Name'] == row['Name']]
                 if not manpower_row.empty:
                     expected = get_shift_for_date(curr_date, manpower_row['Week_Off'].values[0])
@@ -596,10 +651,14 @@ elif page == "👥 Manpower Roster":
     )
     
     if st.button("Commit Roster Updates", type="primary"):
+        old_manpower = st.session_state.manpower.copy()
         st.session_state.manpower = edited_df
-        generate_schedule()
+        
+        # Deploy the new sync logic to prevent wiping out the matrix
+        st.session_state.schedule = sync_roster_updates(old_manpower, edited_df)
+        
         save_data_to_db()
-        st.success("Roster saved! Global matrices updated.")
+        st.success("Roster saved! Global matrices updated securely without losing leaves.")
 
     # --- ADVANCED EXCEL EXPORT COMPONENT ---
     st.markdown("---")
