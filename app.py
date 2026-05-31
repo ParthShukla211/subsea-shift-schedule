@@ -4,6 +4,7 @@ import pandas as pd
 import datetime
 import calendar
 import io
+import os
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Subsea Panel Manpower", layout="wide", page_icon="🎛️")
@@ -101,7 +102,7 @@ st.markdown("""
 
 # --- ENGINE FUNCTIONS ---
 WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-MONTH_NAMES = list(calendar.month_name)[1:] # List of names: January to December
+MONTH_NAMES = list(calendar.month_name)[1:]
 
 def get_shift_for_date(curr_date, week_off_day):
     wo_idx = WEEK_DAYS.index(week_off_day)
@@ -131,8 +132,23 @@ def generate_schedule():
             schedule_data.append({'Date': d, 'Name': row['Name'], 'Role': row['Role'], 'Shift': shift_assigned})
     st.session_state.schedule = pd.DataFrame(schedule_data)
 
+# --- CLOUD PERSISTENCE ENGINE ---
+def save_schedule():
+    """Writes the current RAM state to the server hard drive."""
+    st.session_state.schedule.to_csv("subsea_schedule_data.csv", index=False)
+
+def load_or_generate_schedule():
+    """Boots from the hard drive if data exists, otherwise generates fresh."""
+    if os.path.exists("subsea_schedule_data.csv"):
+        df = pd.read_csv("subsea_schedule_data.csv")
+        df['Date'] = pd.to_datetime(df['Date']).dt.date 
+        st.session_state.schedule = df
+    else:
+        generate_schedule()
+        save_schedule()
+
 if 'manpower' not in st.session_state: init_default_manpower()
-if 'schedule' not in st.session_state: generate_schedule()
+if 'schedule' not in st.session_state: load_or_generate_schedule()
 
 def check_shift_health(shift_df):
     if len(shift_df) == 0: return False, "Unmanned Shift"
@@ -289,7 +305,7 @@ if page == "📅 Monthly Calendar":
             st.button("◀ Previous", on_click=change_month, args=(-1,), use_container_width=True)
         with nav_col2:
             month_name = calendar.month_name[st.session_state.view_month]
-            st.markdown(f"<h3 style='text-align: center; color: #1E3A8A; margin-top: -7px; margin-bottom: 0;'>{month_name} {st.session_state.view_year}</h3>", unsafe_allow_html=True)
+            st.markdown(f"<h3 style='text-align: center; color: #1E3A8A; margin-top: 5px; margin-bottom: 0;'>{month_name} {st.session_state.view_year}</h3>", unsafe_allow_html=True)
         with nav_col3:
             st.button("Next ▶", on_click=change_month, args=(1,), use_container_width=True)
             
@@ -377,6 +393,7 @@ elif page == "🔄 Shift Exchange":
                             if st.button("Execute Mutual Swap", type="primary"):
                                 st.session_state.schedule.loc[my_shift_data.index[0], 'Shift'] = target_shift
                                 st.session_state.schedule.loc[target_data[target_data['Name'] == swap_target].index[0], 'Shift'] = my_shifts[0]
+                                save_schedule()
                                 st.success("Shift successfully swapped. Calendar will highlight this day in yellow.")
                         else: st.error(f"No {my_role} currently assigned to Shift {target_shift}.")
                             
@@ -391,6 +408,7 @@ elif page == "🔄 Shift Exchange":
                             rep_role = st.session_state.manpower[st.session_state.manpower['Name'] == rep_name]['Role'].values[0]
                             new_row = {'Date': req_date, 'Name': rep_name, 'Role': rep_role, 'Shift': my_shifts[0]}
                             st.session_state.schedule = pd.concat([st.session_state.schedule, pd.DataFrame([new_row])], ignore_index=True)
+                            save_schedule()
                             st.success(f"{requester} marked Leave. Shift handed over to {rep_name}.")
                 else:
                     st.warning("Engineer is off-duty (WO/Leave). No operational shift to exchange.")
@@ -442,6 +460,7 @@ elif page == "🏖️ Leave Planner":
                 if st.button("Acknowledge Leave", key="btn_ack"):
                     for idx in leave_records.index: st.session_state.schedule.loc[idx, 'Shift'] = 'Leave'
                     if 'temp_leave_dates' in st.session_state: del st.session_state['temp_leave_dates']
+                    save_schedule()
                     st.success("Registered. Calendar dates will highlight yellow.")
                     st.rerun()
             else:
@@ -461,6 +480,7 @@ elif page == "🏖️ Leave Planner":
                             new_row = {'Date': row['Date'], 'Name': rep_name, 'Role': rep_role, 'Shift': orig_shift}
                             st.session_state.schedule = pd.concat([st.session_state.schedule, pd.DataFrame([new_row])], ignore_index=True)
                     st.session_state.schedule.reset_index(drop=True, inplace=True)
+                    save_schedule()
                     if 'temp_leave_dates' in st.session_state: del st.session_state['temp_leave_dates']
                     st.success("Leave Block Approved and Matrix Updated!")
                     st.rerun()
@@ -494,6 +514,7 @@ elif page == "🏖️ Leave Planner":
                             st.toast(f"System automatically removed {other_row['Name']} from covering Shift {restored_shift}.")
                 
                 st.session_state.schedule.reset_index(drop=True, inplace=True)
+                save_schedule()
                 st.success(f"Leave canceled. {cancel_engg} successfully restored to Shift {restored_shift}.")
                 st.rerun()
 
@@ -543,6 +564,7 @@ elif page == "🏖️ Leave Planner":
                 new_row = {'Date': target_date, 'Name': rep_name, 'Role': rep_role, 'Shift': target_shift}
                 st.session_state.schedule = pd.concat([st.session_state.schedule, pd.DataFrame([new_row])], ignore_index=True)
                 st.session_state.schedule.reset_index(drop=True, inplace=True)
+                save_schedule()
                 st.success(f"{rep_name} deployed to cover shortfall!")
                 st.rerun()
         else: st.success("All operational shifts for the next 30 days are fully manned and healthy.")
@@ -574,6 +596,7 @@ elif page == "👥 Manpower Roster":
     if st.button("Commit Roster Updates", type="primary"):
         st.session_state.manpower = edited_df
         generate_schedule()
+        save_schedule()
         st.success("Roster saved! Global matrices updated.")
 
     # --- ADVANCED EXCEL EXPORT COMPONENT ---
@@ -593,10 +616,8 @@ elif page == "👥 Manpower Roster":
     month_data = export_df[(export_df['Year'] == ex_year) & (export_df['Month'] == ex_month)].copy()
     
     if not month_data.empty:
-        # Create column headers
         month_data['Date_Col'] = month_data['Date'].apply(lambda x: x.strftime('%d\n%a'))
         
-        # Pivot manually so we avoid .to_excel multi-index ghost rows
         pivot_df = month_data.pivot_table(index=['Name', 'Role'], columns='Date_Col', values='Shift', aggfunc='first').fillna('Unmanned')
         ordered_cols = sorted(pivot_df.columns.tolist(), key=lambda x: int(x.split('\n')[0]))
         pivot_df = pivot_df[ordered_cols]
@@ -606,7 +627,6 @@ elif page == "👥 Manpower Roster":
             workbook  = writer.book
             worksheet = workbook.add_worksheet('Shift Matrix')
             
-            # Formats
             title_fmt = workbook.add_format({'bold': True, 'font_size': 16, 'font_color': '#1E3A8A', 'bg_color': '#EFF6FF', 'align': 'left', 'valign': 'vcenter', 'border': 1})
             header_fmt = workbook.add_format({'bold': True, 'bg_color': '#3B82F6', 'font_color': '#FFFFFF', 'align': 'center', 'valign': 'vcenter', 'border': 1, 'text_wrap': True})
             name_fmt = workbook.add_format({'bold': True, 'bg_color': '#F8FAFC', 'border': 1, 'align': 'left', 'valign': 'vcenter'})
