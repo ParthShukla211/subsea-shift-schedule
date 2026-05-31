@@ -677,37 +677,44 @@ elif page == "🗓️ Shift Planner":
     if month_data.empty:
         st.warning("No data generated for this month yet.")
     else:
-        # Crucial Fix: Convert Dates to Strings to bypass Streamlit's TypeError dictionary key rejection
-        month_data['Date_Str'] = month_data['Date'].astype(str)
+        # Sort chronologically so dates flow downwards naturally
+        month_data = month_data.sort_values('Date')
         
-        # Pivot operation to translate normalized rows into a 2D matrix
-        pivot_df = month_data.pivot_table(index=['Name', 'Role'], columns='Date_Str', values='Shift', aggfunc='first').reset_index()
+        # Pivot operation: Dates become rows, Names become columns
+        pivot_df = month_data.pivot_table(index='Date', columns='Name', values='Shift', aggfunc='first').reset_index()
         
-        # Dynamically map SelectboxColumn across the string dates
+        # Build strict column configurations
         col_cfg = {
-            "Name": st.column_config.TextColumn("Name", disabled=True),
-            "Role": st.column_config.TextColumn("Role", disabled=True)
+            "Date": st.column_config.DateColumn("Date", disabled=True, format="DD MMM (ddd)")
         }
         
-        for d_str in pivot_df.columns[2:]: 
-            d_obj = datetime.datetime.strptime(d_str, '%Y-%m-%d').date()
-            col_cfg[d_str] = st.column_config.SelectboxColumn(
-                d_obj.strftime('%d %a'), 
-                options=['A', 'B', 'C', 'WO', 'Leave'],
-                required=True,
-                width="small"
-            )
+        # Dynamically append each engineer as a selectable column
+        for name in pivot_df.columns: 
+            if name != "Date":
+                role_val = st.session_state.manpower.loc[st.session_state.manpower['Name'] == name, 'Role'].values[0]
+                role_abbr = role_val[:2].upper()
+                col_cfg[name] = st.column_config.SelectboxColumn(
+                    f"{name} ({role_abbr})", 
+                    options=['A', 'B', 'C', 'WO', 'Leave'],
+                    required=True,
+                    width="small"
+                )
         
         st.markdown("### Interactive Planning Grid")
-        st.caption("Edit the shifts directly in the grid below. Grid operations support 1 shift per engineer per day. Ensure any subsequent OT or double-shifts are managed via the 'Shift Exchange' module.")
+        st.caption("Dates flow vertically. Edit the shifts directly in the grid below. Grid operations support 1 shift per engineer per day. Ensure any subsequent OT or double-shifts are managed via the 'Shift Exchange' module.")
         
         edited_pivot = st.data_editor(pivot_df, column_config=col_cfg, use_container_width=True, hide_index=True)
         
         if st.button("Commit Master Plan", type="primary"):
-            # Pandas melt operation to return the matrix back to transactional format
-            melted = edited_pivot.melt(id_vars=['Name', 'Role'], var_name='Date_Str', value_name='Shift')
-            melted['Date'] = pd.to_datetime(melted['Date_Str']).dt.date
-            melted = melted.drop(columns=['Date_Str'])
+            # Pandas melt operation to return the vertical matrix back to transactional format
+            melted = edited_pivot.melt(id_vars=['Date'], var_name='Name', value_name='Shift')
+            
+            # Re-map the roles since they were absorbed during the pivot
+            role_map = dict(zip(st.session_state.manpower['Name'], st.session_state.manpower['Role']))
+            melted['Role'] = melted['Name'].map(role_map)
+            
+            # Reorder columns to ensure database integrity: Date, Name, Role, Shift
+            melted = melted[['Date', 'Name', 'Role', 'Shift']]
             
             # Remove old data for this specific month from the main schedule memory
             st.session_state.schedule = df_sched[~mask]
