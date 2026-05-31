@@ -55,9 +55,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- GOOGLE SHEETS PERSISTENCE ENGINE ---
+# --- GOOGLE SHEETS MULTI-TAB PERSISTENCE ENGINE ---
 WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 MONTH_NAMES = list(calendar.month_name)[1:]
+SPREADSHEET_ID = "1KD0tl3MjCumuovdLaN_hS2f_dDBZKNXyuDOUiuKV-jk"
 
 def get_gsheet_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -65,45 +66,34 @@ def get_gsheet_client():
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     return gspread.authorize(creds)
 
-def save_schedule_to_db():
+def save_data_to_db():
     client = get_gsheet_client()
-    # PASTE YOUR ID HERE inside the quotes
-    sheet = client.open_by_key("1KD0tl3MjCumuovdLaN_hS2f_dDBZKNXyuDOUiuKV-jk").sheet1
-    sheet.clear()
-    df_to_save = st.session_state.schedule.copy()
-    df_to_save['Date'] = df_to_save['Date'].astype(str) 
-    data_to_write = [df_to_save.columns.values.tolist()] + df_to_save.values.tolist()
-    sheet.update(range_name='A1', values=data_to_write)
+    sheet = client.open_by_key(SPREADSHEET_ID)
 
-def load_or_generate_schedule():
+    # 1. Save Schedule to Sheet 1
+    ws_sched = sheet.sheet1
+    ws_sched.clear()
+    df_sched = st.session_state.schedule.copy()
+    df_sched['Date'] = df_sched['Date'].astype(str) 
+    sched_data = [df_sched.columns.values.tolist()] + df_sched.values.tolist()
+    ws_sched.update(range_name='A1', values=sched_data)
+
+    # 2. Save Manpower to Sheet 2
     try:
-        client = get_gsheet_client()
-        # PASTE YOUR ID HERE inside the quotes
-        sheet = client.open_by_key("1KD0tl3MjCumuovdLaN_hS2f_dDBZKNXyuDOUiuKV-jk").sheet1
-        data = sheet.get_all_records()
-        if not data:
-            raise ValueError("Sheet is empty")
-        df = pd.DataFrame(data)
-        df['Date'] = pd.to_datetime(df['Date']).dt.date 
-        st.session_state.schedule = df
-    except Exception as e:
-        generate_schedule()
-        save_schedule_to_db()
-
-def get_shift_for_date(curr_date, week_off_day):
-    wo_idx = WEEK_DAYS.index(week_off_day)
-    curr_idx = curr_date.weekday()
-    diff = (curr_idx - wo_idx) % 7
-    if diff == 0: return 'WO'
-    elif diff in [1, 2]: return 'B'
-    elif diff in [3, 4]: return 'A'
-    elif diff in [5, 6]: return 'C'
+        ws_man = sheet.worksheet("Manpower")
+    except:
+        ws_man = sheet.add_worksheet(title="Manpower", rows="50", cols="20")
+    
+    ws_man.clear()
+    df_man = st.session_state.manpower.copy()
+    man_data = [df_man.columns.values.tolist()] + df_man.values.tolist()
+    ws_man.update(range_name='A1', values=man_data)
 
 def init_default_manpower():
     st.session_state.manpower = pd.DataFrame({
         'Emp_ID': ['E01', 'E02', 'E03', 'E04', 'E05', 'E06', 'E07', 'E08', 'E09'],
-        'Name': ['Alice', 'Bob', 'Charlie', 'David', 'Edward', 'Frank', 'Grace', 'Harry', 'Ian'],
-        'Role': ['Senior', 'Senior', 'Senior', 'Senior', 'Senior', 'Junior', 'Junior', 'Junior', 'Junior'],
+        'Name': ['Srajan', 'Anna', 'Swami', 'David', 'Edward', 'Frank', 'Grace', 'Harry', 'Ian'],
+        'Role': ['Senior', 'Senior', 'Junior', 'Senior', 'Senior', 'Junior', 'Junior', 'Junior', 'Junior'],
         'Week_Off': ['Sunday', 'Tuesday', 'Thursday', 'Saturday', 'Friday', 'Monday', 'Tuesday', 'Wednesday', 'Friday']
     })
 
@@ -118,8 +108,42 @@ def generate_schedule():
             schedule_data.append({'Date': d, 'Name': row['Name'], 'Role': row['Role'], 'Shift': shift_assigned})
     st.session_state.schedule = pd.DataFrame(schedule_data)
 
-if 'manpower' not in st.session_state: init_default_manpower()
-if 'schedule' not in st.session_state: load_or_generate_schedule()
+def load_or_generate_data():
+    client = get_gsheet_client()
+    sheet = client.open_by_key(SPREADSHEET_ID)
+
+    # 1. Boot up Manpower FIRST
+    try:
+        ws_man = sheet.worksheet("Manpower")
+        man_data = ws_man.get_all_records()
+        if man_data:
+            st.session_state.manpower = pd.DataFrame(man_data)
+        else:
+            init_default_manpower()
+    except Exception:
+        init_default_manpower()
+
+    # 2. Boot up Schedule SECOND
+    try:
+        ws_sched = sheet.sheet1
+        sched_data = ws_sched.get_all_records()
+        if not sched_data:
+            raise ValueError("Sheet is empty")
+        df = pd.DataFrame(sched_data)
+        df['Date'] = pd.to_datetime(df['Date']).dt.date 
+        st.session_state.schedule = df
+    except Exception:
+        generate_schedule()
+        save_data_to_db()
+
+def get_shift_for_date(curr_date, week_off_day):
+    wo_idx = WEEK_DAYS.index(week_off_day)
+    curr_idx = curr_date.weekday()
+    diff = (curr_idx - wo_idx) % 7
+    if diff == 0: return 'WO'
+    elif diff in [1, 2]: return 'B'
+    elif diff in [3, 4]: return 'A'
+    elif diff in [5, 6]: return 'C'
 
 def check_shift_health(shift_df):
     if len(shift_df) == 0: return False, "Unmanned Shift"
@@ -146,10 +170,13 @@ def determine_day_status(day_data, curr_date):
     if not is_modified:
         for _, row in day_data.iterrows():
             if row['Shift'] not in ['Leave', 'WO']:
-                expected = get_shift_for_date(curr_date, st.session_state.manpower[st.session_state.manpower['Name'] == row['Name']]['Week_Off'].values[0])
-                if expected != row['Shift']: 
-                    is_modified = True
-                    break
+                # Safely get expected shift
+                manpower_row = st.session_state.manpower[st.session_state.manpower['Name'] == row['Name']]
+                if not manpower_row.empty:
+                    expected = get_shift_for_date(curr_date, manpower_row['Week_Off'].values[0])
+                    if expected != row['Shift']: 
+                        is_modified = True
+                        break
     if is_modified: return "modified"
     return "ok"
 
@@ -188,6 +215,10 @@ def get_eligible_replacements(target_date, target_shift, df_sched, manpower, exc
             if is_eligible:
                 avail_enggs.append(f"{e} ({e_role}) - {reason}")
     return avail_enggs
+
+# --- INITIALIZE STATE ON BOOT ---
+if 'manpower' not in st.session_state or 'schedule' not in st.session_state:
+    load_or_generate_data()
 
 # --- GLOBAL TIME LOGIC & STATE ---
 utc_now = datetime.datetime.utcnow()
@@ -364,7 +395,7 @@ elif page == "🔄 Shift Exchange":
                             if st.button("Execute Mutual Swap", type="primary"):
                                 st.session_state.schedule.loc[my_shift_data.index[0], 'Shift'] = target_shift
                                 st.session_state.schedule.loc[target_data[target_data['Name'] == swap_target].index[0], 'Shift'] = my_shifts[0]
-                                save_schedule_to_db()
+                                save_data_to_db()
                                 st.success("Shift successfully swapped. Calendar will highlight this day in yellow.")
                         else: st.error(f"No {my_role} currently assigned to Shift {target_shift}.")
                             
@@ -379,7 +410,7 @@ elif page == "🔄 Shift Exchange":
                             rep_role = st.session_state.manpower[st.session_state.manpower['Name'] == rep_name]['Role'].values[0]
                             new_row = {'Date': req_date, 'Name': rep_name, 'Role': rep_role, 'Shift': my_shifts[0]}
                             st.session_state.schedule = pd.concat([st.session_state.schedule, pd.DataFrame([new_row])], ignore_index=True)
-                            save_schedule_to_db()
+                            save_data_to_db()
                             st.success(f"{requester} marked Leave. Shift handed over to {rep_name}.")
                 else:
                     st.warning("Engineer is off-duty (WO/Leave). No operational shift to exchange.")
@@ -431,7 +462,7 @@ elif page == "🏖️ Leave Planner":
                 if st.button("Acknowledge Leave", key="btn_ack"):
                     for idx in leave_records.index: st.session_state.schedule.loc[idx, 'Shift'] = 'Leave'
                     if 'temp_leave_dates' in st.session_state: del st.session_state['temp_leave_dates']
-                    save_schedule_to_db()
+                    save_data_to_db()
                     st.success("Registered. Calendar dates will highlight yellow.")
                     st.rerun()
             else:
@@ -451,7 +482,7 @@ elif page == "🏖️ Leave Planner":
                             new_row = {'Date': row['Date'], 'Name': rep_name, 'Role': rep_role, 'Shift': orig_shift}
                             st.session_state.schedule = pd.concat([st.session_state.schedule, pd.DataFrame([new_row])], ignore_index=True)
                     st.session_state.schedule.reset_index(drop=True, inplace=True)
-                    save_schedule_to_db()
+                    save_data_to_db()
                     if 'temp_leave_dates' in st.session_state: del st.session_state['temp_leave_dates']
                     st.success("Leave Block Approved and Matrix Updated!")
                     st.rerun()
@@ -485,7 +516,7 @@ elif page == "🏖️ Leave Planner":
                             st.toast(f"System automatically removed {other_row['Name']} from covering Shift {restored_shift}.")
                 
                 st.session_state.schedule.reset_index(drop=True, inplace=True)
-                save_schedule_to_db()
+                save_data_to_db()
                 st.success(f"Leave canceled. {cancel_engg} successfully restored to Shift {restored_shift}.")
                 st.rerun()
 
@@ -535,7 +566,7 @@ elif page == "🏖️ Leave Planner":
                 new_row = {'Date': target_date, 'Name': rep_name, 'Role': rep_role, 'Shift': target_shift}
                 st.session_state.schedule = pd.concat([st.session_state.schedule, pd.DataFrame([new_row])], ignore_index=True)
                 st.session_state.schedule.reset_index(drop=True, inplace=True)
-                save_schedule_to_db()
+                save_data_to_db()
                 st.success(f"{rep_name} deployed to cover shortfall!")
                 st.rerun()
         else: st.success("All operational shifts for the next 30 days are fully manned and healthy.")
@@ -567,7 +598,7 @@ elif page == "👥 Manpower Roster":
     if st.button("Commit Roster Updates", type="primary"):
         st.session_state.manpower = edited_df
         generate_schedule()
-        save_schedule_to_db()
+        save_data_to_db()
         st.success("Roster saved! Global matrices updated.")
 
     # --- ADVANCED EXCEL EXPORT COMPONENT ---
