@@ -144,21 +144,16 @@ def generate_schedule():
     st.session_state.schedule = pd.DataFrame(schedule_data)
 
 def sync_roster_updates(old_df, new_df):
-    """Safely updates the schedule based on roster changes without wiping saved leaves/swaps."""
     curr_sched = st.session_state.schedule.copy()
     today = datetime.date.today()
-    
     old_wo_map = dict(zip(old_df['Name'], old_df['Week_Off']))
     
-    # 1. Remove deleted personnel
     valid_names = new_df['Name'].tolist()
     curr_sched = curr_sched[curr_sched['Name'].isin(valid_names)]
     
-    # 2. Update Roles
     role_map = dict(zip(new_df['Name'], new_df['Role']))
     curr_sched['Role'] = curr_sched['Name'].map(role_map)
     
-    # 3. Add new personnel
     old_names = old_df['Name'].tolist()
     added_names = [n for n in valid_names if n not in old_names]
     
@@ -178,7 +173,6 @@ def sync_roster_updates(old_df, new_df):
                 })
         curr_sched = pd.concat([curr_sched, pd.DataFrame(new_rows)], ignore_index=True)
         
-    # 4. Handle Week_Off changes without destroying manual swaps/leaves
     changed_wo_names = []
     for _, row in new_df.iterrows():
         name = row['Name']
@@ -202,7 +196,6 @@ def load_or_generate_data():
     client = get_gsheet_client()
     sheet = client.open_by_key(SPREADSHEET_ID)
 
-    # 1. Boot up Manpower FIRST
     try:
         ws_man = sheet.worksheet("Manpower")
         man_data = ws_man.get_all_records()
@@ -213,7 +206,6 @@ def load_or_generate_data():
     except Exception:
         init_default_manpower()
 
-    # 2. Boot up Schedule SECOND
     try:
         ws_sched = sheet.sheet1
         sched_data = ws_sched.get_all_records()
@@ -281,7 +273,6 @@ def get_eligible_replacements(target_date, target_shift, df_sched, manpower, exc
         e_shift_curr = e_shifts_curr[0] if e_shifts_curr else None
 
         if e_shift_curr == target_shift: continue
-
         e_role = manpower[manpower['Name'] == e]['Role'].values[0]
 
         if e_shift_curr == 'WO':
@@ -350,7 +341,7 @@ with st.sidebar:
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("### 🌊 Navigation")
     
-    page = st.radio("Select Module", ["📅 Monthly Calendar", "🔄 Shift Exchange", "🏖️ Leave Planner", "👥 Manpower Roster"], label_visibility="collapsed")
+    page = st.radio("Select Module", ["📅 Monthly Calendar", "🔄 Shift Exchange", "🏖️ Leave Planner", "🗓️ Shift Planner", "👥 Manpower Roster"], label_visibility="collapsed")
     
     st.markdown("<br><br>", unsafe_allow_html=True)
     if st.button("🚪 Logout", use_container_width=True):
@@ -666,7 +657,65 @@ elif page == "🏖️ Leave Planner":
         else: st.success("All operational shifts for the next 30 days are fully manned and healthy.")
 
 # ---------------------------------------------------------
-# 4. MANPOWER ROSTER (MINI CALENDAR & EXPORT)
+# 4. MONTHLY SHIFT PLANNER (MANUAL OVERRIDE)
+# ---------------------------------------------------------
+elif page == "🗓️ Shift Planner":
+    st.markdown("<h1 style='color: #1E3A8A; margin-bottom: 0;'>🗓️ Monthly Master Shift Planner</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='color: #64748B;'>Manually override and design the shift matrix for an entire month.</p>", unsafe_allow_html=True)
+
+    col_y, col_m, _ = st.columns([1, 1, 2])
+    plan_year = col_y.selectbox("Select Year", range(ist_now.year - 1, ist_now.year + 2), index=1, key="plan_y")
+    plan_month_name = col_m.selectbox("Select Month", MONTH_NAMES, index=ist_now.month - 1, key="plan_m")
+    plan_month = MONTH_NAMES.index(plan_month_name) + 1
+
+    df_sched = st.session_state.schedule.copy()
+    
+    # Filter isolating the selected month
+    mask = (df_sched['Date'].apply(lambda x: x.year) == plan_year) & (df_sched['Date'].apply(lambda x: x.month) == plan_month)
+    month_data = df_sched[mask]
+
+    if month_data.empty:
+        st.warning("No data generated for this month yet.")
+    else:
+        # Pivot operation to translate normalized rows into a 2D matrix
+        pivot_df = month_data.pivot_table(index=['Name', 'Role'], columns='Date', values='Shift', aggfunc='first').reset_index()
+        
+        # Dynamically map SelectboxColumn across the datetime objects for strict validation
+        col_cfg = {
+            "Name": st.column_config.TextColumn("Name", disabled=True),
+            "Role": st.column_config.TextColumn("Role", disabled=True)
+        }
+        
+        for d in pivot_df.columns[2:]: 
+            col_cfg[d] = st.column_config.SelectboxColumn(
+                d.strftime('%d\n%a'), 
+                options=['A', 'B', 'C', 'WO', 'Leave'],
+                required=True,
+                width="small"
+            )
+        
+        st.markdown("### Interactive Planning Grid")
+        st.caption("Edit the shifts directly in the grid below. Grid operations support 1 shift per engineer per day. Ensure any subsequent OT or double-shifts are managed via the 'Shift Exchange' module.")
+        
+        edited_pivot = st.data_editor(pivot_df, column_config=col_cfg, use_container_width=True, hide_index=True)
+        
+        if st.button("Commit Master Plan", type="primary"):
+            # Pandas melt operation to return the matrix back to transactional format
+            melted = edited_pivot.melt(id_vars=['Name', 'Role'], var_name='Date', value_name='Shift')
+            
+            # Remove old data for this specific month from the main schedule memory
+            st.session_state.schedule = df_sched[~mask]
+            
+            # Append newly melted data and enforce sorting integrity
+            st.session_state.schedule = pd.concat([st.session_state.schedule, melted], ignore_index=True)
+            st.session_state.schedule = st.session_state.schedule.sort_values(by=['Date', 'Name']).reset_index(drop=True)
+            
+            save_data_to_db()
+            st.success(f"Master plan for {plan_month_name} {plan_year} successfully committed to the database!")
+            st.rerun()
+
+# ---------------------------------------------------------
+# 5. MANPOWER ROSTER (MINI CALENDAR & EXPORT)
 # ---------------------------------------------------------
 elif page == "👥 Manpower Roster":
     st.markdown("<h1 style='color: #1E3A8A; margin-bottom: 0;'>Panel Manpower Configuration</h1>", unsafe_allow_html=True)
@@ -693,7 +742,6 @@ elif page == "👥 Manpower Roster":
         old_manpower = st.session_state.manpower.copy()
         st.session_state.manpower = edited_df
         
-        # Deploy the new sync logic to prevent wiping out the matrix
         st.session_state.schedule = sync_roster_updates(old_manpower, edited_df)
         
         save_data_to_db()
