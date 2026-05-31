@@ -802,7 +802,7 @@ elif page == "👥 Manpower Roster":
 # --- ADVANCED EXCEL EXPORT COMPONENT ---
     st.markdown("---")
     st.markdown("<h2 style='color: #1E3A8A;'>📥 Export Monthly Schedule (Excel)</h2>", unsafe_allow_html=True)
-    st.markdown("Generate a highly-formatted, color-coded Excel `.xlsx` report complete with operational statistics.")
+    st.markdown("Generate a highly-formatted, color-coded Excel `.xlsx` report complete with operational statistics and daily manpower counts.")
     
     col_ex1, col_ex2, col_ex3 = st.columns([1, 1, 2])
     ex_year = col_ex1.selectbox("Export Year", range(ist_now.year - 1, ist_now.year + 2), index=1, key="ex_y")
@@ -871,12 +871,13 @@ elif page == "👥 Manpower Roster":
             workbook  = writer.book
             worksheet = workbook.add_worksheet(f'{ex_month_name} Matrix')
             
-            # Freeze panes (Locks the top 3 rows and first 2 columns for easy scrolling)
-            worksheet.freeze_panes(3, 2)
+            # Freeze panes (Locks the top 4 rows and first 2 columns for easy scrolling)
+            worksheet.freeze_panes(4, 2)
             
             # FORMATTING DICTIONARIES
             title_fmt = workbook.add_format({'bold': True, 'font_size': 18, 'font_color': '#FFFFFF', 'bg_color': '#1E3A8A', 'align': 'center', 'valign': 'vcenter', 'border': 1})
             header_fmt = workbook.add_format({'bold': True, 'bg_color': '#3B82F6', 'font_color': '#FFFFFF', 'align': 'center', 'valign': 'vcenter', 'border': 1, 'text_wrap': True})
+            count_fmt = workbook.add_format({'bold': True, 'bg_color': '#E0F2FE', 'font_color': '#0369A1', 'align': 'center', 'valign': 'vcenter', 'border': 1, 'text_wrap': True, 'font_size': 9})
             stat_hdr_fmt = workbook.add_format({'bold': True, 'bg_color': '#10B981', 'font_color': '#FFFFFF', 'align': 'center', 'valign': 'vcenter', 'border': 1, 'text_wrap': True})
             name_fmt = workbook.add_format({'bold': True, 'bg_color': '#F8FAFC', 'border': 1, 'align': 'left', 'valign': 'vcenter'})
             sr_fmt = workbook.add_format({'bold': True, 'bg_color': '#DCFCE7', 'font_color': '#166534', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
@@ -896,44 +897,59 @@ elif page == "👥 Manpower Roster":
             
             # Write Super-Title
             total_cols = len(ordered_cols) + 2 + 4 # 2 for Name/Role, 4 for Stats
-            worksheet.merge_range(0, 0, 1, total_cols - 1, f"🌊 SUBSEA PANEL MANPOWER MATRIX | {ex_month_name.upper()} {ex_year}", title_fmt)
+            worksheet.merge_range(0, 0, 1, total_cols - 1, f"🗓️ 🌊 SUBSEA PANEL MANPOWER MATRIX | {ex_month_name.upper()} {ex_year}", title_fmt)
             
-            # Write Main Headers
+            # Write Main Headers (Row 2)
             worksheet.write(2, 0, "Engineer Name", header_fmt)
             worksheet.write(2, 1, "Role", header_fmt)
             worksheet.set_column(0, 0, 20) 
             worksheet.set_column(1, 1, 10) 
             
-            # Date Headers
+            # Write Manpower Summary Row Headers (Row 3)
+            worksheet.write(3, 0, "Daily Shift Count", count_fmt)
+            worksheet.write(3, 1, "Manpower", count_fmt)
+            worksheet.set_row(3, 40) # Make row taller to fit multi-line count text
+            
+            # Date Headers and Daily Manpower Counts
             for col_num, date_str in enumerate(ordered_cols):
                 worksheet.write(2, col_num + 2, date_str, header_fmt)
-                worksheet.set_column(col_num + 2, col_num + 2, 6)
+                worksheet.set_column(col_num + 2, col_num + 2, 7)
                 
-            # Stat Headers
+                # Calculate daily shift counts directly from transactional month_data
+                day_shifts = month_data[month_data['Date_Col'] == date_str]['Shift'].tolist()
+                a_cnt = day_shifts.count('A')
+                b_cnt = day_shifts.count('B')
+                c_cnt = day_shifts.count('C')
+                
+                count_str = f"A:{a_cnt}\nB:{b_cnt}\nC:{c_cnt}"
+                worksheet.write(3, col_num + 2, count_str, count_fmt)
+                
+            # Stat Headers and empty dash for Row 3
             stat_start_col = len(ordered_cols) + 2
             stat_headers = ['Total\nShifts', 'Double\nShifts', 'Leaves\nTaken', 'WO\nTaken']
             for i, hdr in enumerate(stat_headers):
                 worksheet.write(2, stat_start_col + i, hdr, stat_hdr_fmt)
+                worksheet.write(3, stat_start_col + i, "-", count_fmt)
                 worksheet.set_column(stat_start_col + i, stat_start_col + i, 9)
                 
-            # Populate Data
+            # Populate Engineer Data (Starts at Row 4)
             for row_num, row_data in pivot_df.iterrows():
                 # Write Name & Role with specific styling
-                worksheet.write(row_num + 3, 0, row_data['Name'], name_fmt)
+                worksheet.write(row_num + 4, 0, row_data['Name'], name_fmt)
                 r_fmt = sr_fmt if row_data['Role'] == 'Senior' else jr_fmt
-                worksheet.write(row_num + 3, 1, row_data['Role'], r_fmt)
+                worksheet.write(row_num + 4, 1, row_data['Role'], r_fmt)
                 
                 # Write Calendar Shifts
                 for col_num, date_col in enumerate(ordered_cols):
                     val = row_data[date_col]
                     fmt = shift_colors.get(val, shift_colors['Unmanned'])
-                    worksheet.write(row_num + 3, col_num + 2, val, fmt)
+                    worksheet.write(row_num + 4, col_num + 2, val, fmt)
                     
                 # Write Analytics
-                worksheet.write(row_num + 3, stat_start_col, stats_df.iloc[row_num]['Total Shifts'], stat_val_fmt)
-                worksheet.write(row_num + 3, stat_start_col + 1, stats_df.iloc[row_num]['Double Shifts'], stat_val_fmt)
-                worksheet.write(row_num + 3, stat_start_col + 2, stats_df.iloc[row_num]['Leaves Taken'], stat_val_fmt)
-                worksheet.write(row_num + 3, stat_start_col + 3, stats_df.iloc[row_num]['WO Taken'], stat_val_fmt)
+                worksheet.write(row_num + 4, stat_start_col, stats_df.iloc[row_num]['Total Shifts'], stat_val_fmt)
+                worksheet.write(row_num + 4, stat_start_col + 1, stats_df.iloc[row_num]['Double Shifts'], stat_val_fmt)
+                worksheet.write(row_num + 4, stat_start_col + 2, stats_df.iloc[row_num]['Leaves Taken'], stat_val_fmt)
+                worksheet.write(row_num + 4, stat_start_col + 3, stats_df.iloc[row_num]['WO Taken'], stat_val_fmt)
                     
         excel_data = output.getvalue()
         
