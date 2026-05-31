@@ -14,7 +14,11 @@ st.set_page_config(page_title="Subsea Panel Manpower", layout="wide", page_icon=
 st.markdown("""
 <style>
     .block-container { padding-top: 2rem; }
-    div[data-testid="stSelectbox"] *, div[data-testid="stDateInput"] *, div[data-baseweb="select"], div[data-baseweb="select"] *, input { cursor: pointer !important; }
+    /* Default cursor for clickable elements */
+    div[data-testid="stSelectbox"] *, div[data-testid="stDateInput"] *, div[data-baseweb="select"], div[data-baseweb="select"] *, input[type="button"], input[type="submit"] { cursor: pointer !important; }
+    /* Override for text inputs to show the standard typing cursor (I-beam) */
+    div[data-testid="stTextInput"] input { cursor: text !important; }
+    
     .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; margin-top: 5px; }
     .cal-header { text-align: center; font-weight: 700; color: white; padding: 8px; border-radius: 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; background: linear-gradient(135deg, #3B82F6, #60A5FA); box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2); }
     .cal-day { position: relative; border: 1px solid #BFDBFE; border-top: 4px solid #93C5FD; border-radius: 6px; padding: 8px; min-height: 95px; background-color: #FFFFFF; transition: all 0.2s ease; cursor: default; }
@@ -62,24 +66,25 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.markdown("<h1 style='text-align: center; color: #1E3A8A; margin-top: 10vh;'>🎛️ Subsea Panel Access</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color: #1E3A8A; margin-top: 8vh; font-size: 3rem;'>🌊 Subsea Panel Manpower Management 🎛️</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #64748B; font-size: 1.1rem; margin-bottom: 2rem;'>Secure Operational Dashboard</p>", unsafe_allow_html=True)
     
     col_spacer1, col_login, col_spacer2 = st.columns([1, 1.2, 1])
     with col_login:
         with st.form("login_form"):
-            st.markdown("<h3 style='text-align: center; color: #3B82F6;'>Secure Login</h3>", unsafe_allow_html=True)
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            submit = st.form_submit_button("Unlock App", type="primary", use_container_width=True)
+            st.markdown("<h3 style='text-align: center; color: #3B82F6; margin-bottom: 20px;'>🔐 Authentication Required</h3>", unsafe_allow_html=True)
+            username = st.text_input("👤 Username", placeholder="Enter your credentials")
+            password = st.text_input("🔑 Password", type="password", placeholder="••••••••")
+            st.markdown("<br>", unsafe_allow_html=True)
+            submit = st.form_submit_button("🚀 Unlock Dashboard", type="primary", use_container_width=True)
             
             if submit:
                 if username == "Subsea" and password == "Subsea@05":
                     st.session_state.authenticated = True
-                    st.rerun()  # Instantly reloads the script and bypasses this block
+                    st.rerun()
                 else:
                     st.error("❌ Authentication Failed: Invalid username or password.")
     
-    # st.stop() acts as a strict firewall. Nothing below this line runs if not authenticated.
     st.stop()
 
 
@@ -396,7 +401,7 @@ if page == "📅 Monthly Calendar":
             st.button("◀ Previous", on_click=change_month, args=(-1,), use_container_width=True)
         with nav_col2:
             month_name = calendar.month_name[st.session_state.view_month]
-            st.markdown(f"<h3 style='text-align: center; color: #1E3A8A; margin-top: 5px; margin-bottom: 0;'>{month_name} {st.session_state.view_year}</h3>", unsafe_allow_html=True)
+            st.markdown(f"<h3 style='text-align: center; color: #1E3A8A; margin-top: -7px; margin-bottom: 0;'>{month_name} {st.session_state.view_year}</h3>", unsafe_allow_html=True)
         with nav_col3:
             st.button("Next ▶", on_click=change_month, args=(1,), use_container_width=True)
             
