@@ -87,6 +87,8 @@ def load_or_generate_schedule():
     except Exception as e:
         generate_schedule()
         save_schedule_to_db()
+        st.error(f"SAVE ERROR: {e}")
+        st.stop()
 
 def get_shift_for_date(curr_date, week_off_day):
     wo_idx = WEEK_DAYS.index(week_off_day)
