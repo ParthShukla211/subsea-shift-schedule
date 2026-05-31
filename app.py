@@ -799,10 +799,10 @@ elif page == "👥 Manpower Roster":
         save_data_to_db()
         st.success("Roster saved! Global matrices updated securely without losing leaves.")
 
-    # --- ADVANCED EXCEL EXPORT COMPONENT ---
+# --- ADVANCED EXCEL EXPORT COMPONENT ---
     st.markdown("---")
     st.markdown("<h2 style='color: #1E3A8A;'>📥 Export Monthly Schedule (Excel)</h2>", unsafe_allow_html=True)
-    st.markdown("Generate a formatted, color-coded Excel `.xlsx` file of the shift matrix.")
+    st.markdown("Generate a highly-formatted, color-coded Excel `.xlsx` report complete with operational statistics.")
     
     col_ex1, col_ex2, col_ex3 = st.columns([1, 1, 2])
     ex_year = col_ex1.selectbox("Export Year", range(ist_now.year - 1, ist_now.year + 2), index=1, key="ex_y")
@@ -816,56 +816,130 @@ elif page == "👥 Manpower Roster":
     month_data = export_df[(export_df['Year'] == ex_year) & (export_df['Month'] == ex_month)].copy()
     
     if not month_data.empty:
+        # Custom Aggregation to handle Double Shifts cleanly in the export
+        def export_agg(s):
+            shifts = set(s)
+            if 'A' in shifts and 'B' in shifts: return 'A+B'
+            if 'B' in shifts and 'C' in shifts: return 'B+C'
+            if 'Leave' in shifts: return 'Leave'
+            if 'WO' in shifts: return 'WO'
+            return s.iloc[0] if not s.empty else 'Unmanned'
+
         month_data['Date_Col'] = month_data['Date'].apply(lambda x: x.strftime('%d\n%a'))
         
-        pivot_df = month_data.pivot_table(index=['Name', 'Role'], columns='Date_Col', values='Shift', aggfunc='first').fillna('Unmanned')
+        # Pivot the data
+        pivot_df = month_data.pivot_table(index=['Name', 'Role'], columns='Date_Col', values='Shift', aggfunc=export_agg).fillna('Unmanned')
+        
+        # Order columns chronologically
         ordered_cols = sorted(pivot_df.columns.tolist(), key=lambda x: int(x.split('\n')[0]))
         pivot_df = pivot_df[ordered_cols]
         
+        # Flatten index to sort by Seniority (Senior=0, Junior=1) then alphabetically by Name
+        pivot_df = pivot_df.reset_index()
+        pivot_df['Role_Rank'] = pivot_df['Role'].apply(lambda x: 0 if x == 'Senior' else 1)
+        pivot_df = pivot_df.sort_values(['Role_Rank', 'Name']).drop(columns=['Role_Rank'])
+        
+        # Calculate Statistics per Engineer
+        stats_data = []
+        for _, row in pivot_df.iterrows():
+            total_shifts = 0
+            leaves = 0
+            wos = 0
+            double_shifts = 0
+            
+            for col in ordered_cols:
+                val = row[col]
+                if val in ['A', 'B', 'C']: total_shifts += 1
+                elif val in ['A+B', 'B+C']: 
+                    total_shifts += 2
+                    double_shifts += 1
+                elif val == 'Leave': leaves += 1
+                elif val == 'WO': wos += 1
+                
+            stats_data.append({
+                'Total Shifts': total_shifts,
+                'Double Shifts': double_shifts,
+                'Leaves Taken': leaves,
+                'WO Taken': wos
+            })
+            
+        stats_df = pd.DataFrame(stats_data)
+        
+        # Excel Generation Engine
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             workbook  = writer.book
-            worksheet = workbook.add_worksheet('Shift Matrix')
+            worksheet = workbook.add_worksheet(f'{ex_month_name} Matrix')
             
-            title_fmt = workbook.add_format({'bold': True, 'font_size': 16, 'font_color': '#1E3A8A', 'bg_color': '#EFF6FF', 'align': 'left', 'valign': 'vcenter', 'border': 1})
+            # Freeze panes (Locks the top 3 rows and first 2 columns for easy scrolling)
+            worksheet.freeze_panes(3, 2)
+            
+            # FORMATTING DICTIONARIES
+            title_fmt = workbook.add_format({'bold': True, 'font_size': 18, 'font_color': '#FFFFFF', 'bg_color': '#1E3A8A', 'align': 'center', 'valign': 'vcenter', 'border': 1})
             header_fmt = workbook.add_format({'bold': True, 'bg_color': '#3B82F6', 'font_color': '#FFFFFF', 'align': 'center', 'valign': 'vcenter', 'border': 1, 'text_wrap': True})
+            stat_hdr_fmt = workbook.add_format({'bold': True, 'bg_color': '#10B981', 'font_color': '#FFFFFF', 'align': 'center', 'valign': 'vcenter', 'border': 1, 'text_wrap': True})
             name_fmt = workbook.add_format({'bold': True, 'bg_color': '#F8FAFC', 'border': 1, 'align': 'left', 'valign': 'vcenter'})
+            sr_fmt = workbook.add_format({'bold': True, 'bg_color': '#DCFCE7', 'font_color': '#166534', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+            jr_fmt = workbook.add_format({'bold': True, 'bg_color': '#F3E8FF', 'font_color': '#6B21A8', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+            stat_val_fmt = workbook.add_format({'bold': True, 'bg_color': '#ECFDF5', 'align': 'center', 'valign': 'vcenter', 'border': 1})
             
             shift_colors = {
                 'A': workbook.add_format({'bg_color': '#DBEAFE', 'font_color': '#1D4ED8', 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bold': True}),
                 'B': workbook.add_format({'bg_color': '#FEF3C7', 'font_color': '#B45309', 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bold': True}),
                 'C': workbook.add_format({'bg_color': '#F3E8FF', 'font_color': '#7E22CE', 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bold': True}),
+                'A+B': workbook.add_format({'bg_color': '#1E3A8A', 'font_color': '#FDE047', 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bold': True}),
+                'B+C': workbook.add_format({'bg_color': '#7E22CE', 'font_color': '#FDE047', 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bold': True}),
                 'WO': workbook.add_format({'bg_color': '#F1F5F9', 'font_color': '#64748B', 'align': 'center', 'valign': 'vcenter', 'border': 1, 'italic': True}),
                 'Leave': workbook.add_format({'bg_color': '#FEE2E2', 'font_color': '#B91C1C', 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bold': True}),
                 'Unmanned': workbook.add_format({'bg_color': '#FFFFFF', 'font_color': '#CBD5E1', 'align': 'center', 'valign': 'vcenter', 'border': 1})
             }
             
-            num_cols = len(pivot_df.columns) + 2
-            worksheet.merge_range(0, 0, 1, num_cols - 1, f"Subsea Panel Shift Matrix: {ex_month_name} {ex_year}", title_fmt)
+            # Write Super-Title
+            total_cols = len(ordered_cols) + 2 + 4 # 2 for Name/Role, 4 for Stats
+            worksheet.merge_range(0, 0, 1, total_cols - 1, f"🌊 SUBSEA PANEL MANPOWER MATRIX | {ex_month_name.upper()} {ex_year}", title_fmt)
             
+            # Write Main Headers
             worksheet.write(2, 0, "Engineer Name", header_fmt)
             worksheet.write(2, 1, "Role", header_fmt)
-            worksheet.set_column(0, 0, 18) 
+            worksheet.set_column(0, 0, 20) 
             worksheet.set_column(1, 1, 10) 
             
-            for col_num, date_str in enumerate(pivot_df.columns):
+            # Date Headers
+            for col_num, date_str in enumerate(ordered_cols):
                 worksheet.write(2, col_num + 2, date_str, header_fmt)
-                worksheet.set_column(col_num + 2, col_num + 2, 7)
+                worksheet.set_column(col_num + 2, col_num + 2, 6)
                 
-            for row_num, (index_tuple, row_data) in enumerate(pivot_df.iterrows()):
-                name, role = index_tuple
-                worksheet.write(row_num + 3, 0, name, name_fmt)
-                worksheet.write(row_num + 3, 1, role, name_fmt)
+            # Stat Headers
+            stat_start_col = len(ordered_cols) + 2
+            stat_headers = ['Total\nShifts', 'Double\nShifts', 'Leaves\nTaken', 'WO\nTaken']
+            for i, hdr in enumerate(stat_headers):
+                worksheet.write(2, stat_start_col + i, hdr, stat_hdr_fmt)
+                worksheet.set_column(stat_start_col + i, stat_start_col + i, 9)
                 
-                for col_num, val in enumerate(row_data):
+            # Populate Data
+            for row_num, row_data in pivot_df.iterrows():
+                # Write Name & Role with specific styling
+                worksheet.write(row_num + 3, 0, row_data['Name'], name_fmt)
+                r_fmt = sr_fmt if row_data['Role'] == 'Senior' else jr_fmt
+                worksheet.write(row_num + 3, 1, row_data['Role'], r_fmt)
+                
+                # Write Calendar Shifts
+                for col_num, date_col in enumerate(ordered_cols):
+                    val = row_data[date_col]
                     fmt = shift_colors.get(val, shift_colors['Unmanned'])
                     worksheet.write(row_num + 3, col_num + 2, val, fmt)
+                    
+                # Write Analytics
+                worksheet.write(row_num + 3, stat_start_col, stats_df.iloc[row_num]['Total Shifts'], stat_val_fmt)
+                worksheet.write(row_num + 3, stat_start_col + 1, stats_df.iloc[row_num]['Double Shifts'], stat_val_fmt)
+                worksheet.write(row_num + 3, stat_start_col + 2, stats_df.iloc[row_num]['Leaves Taken'], stat_val_fmt)
+                worksheet.write(row_num + 3, stat_start_col + 3, stats_df.iloc[row_num]['WO Taken'], stat_val_fmt)
                     
         excel_data = output.getvalue()
         
         col_ex3.markdown("<br>", unsafe_allow_html=True)
         col_ex3.download_button(
-            label=f"💾 Download {ex_month_name} {ex_year} Excel File",
+            label=f"💾 Download {ex_month_name} {ex_year} Master Report",
             data=excel_data,
             file_name=f"Subsea_Schedule_{ex_year}_{ex_month:02d}.xlsx",
             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
