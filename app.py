@@ -719,7 +719,7 @@ elif page == "🗓️ Shift Planner":
             role_abbr = "Sr" if role_val == "Senior" else "Jr"
             col_cfg[name] = st.column_config.SelectboxColumn(
                 f"{name} ({role_abbr})", 
-                options=['A', 'B', 'C', 'WO', 'Leave', 'A+B', 'B+C', 'C+A'],
+                options=['A', 'B', 'C', 'WO', 'Leave', 'A+B', 'B+C'],
                 required=True,
                 width="small"
             )
