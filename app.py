@@ -6,8 +6,99 @@ import calendar
 import io
 import os
 
+import streamlit as st
+import pandas as pd
+import datetime
+import calendar
+import io
+from sqlalchemy import text
+
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Subsea Panel Manpower", layout="wide", page_icon="🎛️")
+
+# --- DATABASE PERSISTENCE ENGINE ---
+# Ensure your Streamlit Cloud Secrets are set!
+conn = st.connection("postgresql", type="sql")
+
+def init_db():
+    with conn.session as s:
+        s.execute(text("""
+            CREATE TABLE IF NOT EXISTS schedule_data (
+                id SERIAL PRIMARY KEY,
+                date DATE,
+                name VARCHAR(100),
+                role VARCHAR(50),
+                shift VARCHAR(10)
+            )
+        """))
+        s.commit()
+
+def save_schedule_to_db():
+    with conn.session as s:
+        s.execute(text("TRUNCATE TABLE schedule_data"))
+        # Rename app-friendly columns back to db-friendly (lowercase)
+        df_to_save = st.session_state.schedule.rename(columns={
+            'Date': 'date', 'Name': 'name', 'Role': 'role', 'Shift': 'shift'
+        })
+        df_to_save.to_sql("schedule_data", con=s.bind, if_exists="append", index=False)
+        s.commit()
+
+def load_or_generate_schedule():
+    init_db()
+    df = conn.query("SELECT * FROM schedule_data", ttl=0)
+    if df.empty:
+        generate_schedule()
+        save_schedule_to_db()
+        st.session_state.schedule = conn.query("SELECT * FROM schedule_data", ttl=0)
+    
+    # Standardize column names for the app logic
+    df = df.rename(columns={'date': 'Date', 'name': 'Name', 'role': 'Role', 'shift': 'Shift'})
+    df['Date'] = pd.to_datetime(df['Date']).dt.date
+    st.session_state.schedule = df
+
+# --- CORE LOGIC ---
+WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+MONTH_NAMES = list(calendar.month_name)[1:]
+
+def get_shift_for_date(curr_date, week_off_day):
+    wo_idx = WEEK_DAYS.index(week_off_day)
+    curr_idx = curr_date.weekday()
+    diff = (curr_idx - wo_idx) % 7
+    if diff == 0: return 'WO'
+    elif diff in [1, 2]: return 'B'
+    elif diff in [3, 4]: return 'A'
+    elif diff in [5, 6]: return 'C'
+
+def init_default_manpower():
+    st.session_state.manpower = pd.DataFrame({
+        'Emp_ID': ['E01', 'E02', 'E03', 'E04', 'E05', 'E06', 'E07', 'E08', 'E09'],
+        'Name': ['Alice', 'Bob', 'Charlie', 'David', 'Edward', 'Frank', 'Grace', 'Harry', 'Ian'],
+        'Role': ['Senior', 'Senior', 'Senior', 'Senior', 'Senior', 'Junior', 'Junior', 'Junior', 'Junior'],
+        'Week_Off': ['Sunday', 'Tuesday', 'Thursday', 'Saturday', 'Friday', 'Monday', 'Tuesday', 'Wednesday', 'Friday']
+    })
+
+def generate_schedule():
+    today = datetime.date.today()
+    start_date = datetime.date(today.year - 1, 1, 1) 
+    dates = [start_date + datetime.timedelta(days=x) for x in range(1095)]
+    schedule_data = []
+    for d in dates:
+        for _, row in st.session_state.manpower.iterrows():
+            shift_assigned = get_shift_for_date(d, row['Week_Off'])
+            schedule_data.append({'Date': d, 'Name': row['Name'], 'Role': row['Role'], 'Shift': shift_assigned})
+    st.session_state.schedule = pd.DataFrame(schedule_data)
+
+# --- RUNTIME INITIALIZATION ---
+if 'manpower' not in st.session_state: init_default_manpower()
+if 'schedule' not in st.session_state: load_or_generate_schedule()
+
+# ... [Insert the rest of your UI Logic, CSS, and Page Routing here] ...
+# Note: Ensure you find every instance of save_schedule() in your 
+# previous code and update it to call save_schedule_to_db()
+
+# --- PAGE CONFIGURATION ---
+st.set_page_config(page_title="Subsea Panel Manpower", layout="wide", page_icon="🎛️")
+
 
 # --- LIGHT BLUE CORPORATE & DYNAMIC STATUS CSS ---
 st.markdown("""
@@ -133,7 +224,7 @@ def generate_schedule():
     st.session_state.schedule = pd.DataFrame(schedule_data)
 
 # --- CLOUD PERSISTENCE ENGINE ---
-def save_schedule():
+def save_schedule_to_db():
     """Writes the current RAM state to the server hard drive."""
     st.session_state.schedule.to_csv("subsea_schedule_data.csv", index=False)
 
@@ -145,7 +236,7 @@ def load_or_generate_schedule():
         st.session_state.schedule = df
     else:
         generate_schedule()
-        save_schedule()
+        save_schedule_to_db()
 
 if 'manpower' not in st.session_state: init_default_manpower()
 if 'schedule' not in st.session_state: load_or_generate_schedule()
@@ -393,7 +484,7 @@ elif page == "🔄 Shift Exchange":
                             if st.button("Execute Mutual Swap", type="primary"):
                                 st.session_state.schedule.loc[my_shift_data.index[0], 'Shift'] = target_shift
                                 st.session_state.schedule.loc[target_data[target_data['Name'] == swap_target].index[0], 'Shift'] = my_shifts[0]
-                                save_schedule()
+                                save_schedule_to_db()
                                 st.success("Shift successfully swapped. Calendar will highlight this day in yellow.")
                         else: st.error(f"No {my_role} currently assigned to Shift {target_shift}.")
                             
@@ -408,7 +499,7 @@ elif page == "🔄 Shift Exchange":
                             rep_role = st.session_state.manpower[st.session_state.manpower['Name'] == rep_name]['Role'].values[0]
                             new_row = {'Date': req_date, 'Name': rep_name, 'Role': rep_role, 'Shift': my_shifts[0]}
                             st.session_state.schedule = pd.concat([st.session_state.schedule, pd.DataFrame([new_row])], ignore_index=True)
-                            save_schedule()
+                            save_schedule_to_db()
                             st.success(f"{requester} marked Leave. Shift handed over to {rep_name}.")
                 else:
                     st.warning("Engineer is off-duty (WO/Leave). No operational shift to exchange.")
@@ -460,7 +551,7 @@ elif page == "🏖️ Leave Planner":
                 if st.button("Acknowledge Leave", key="btn_ack"):
                     for idx in leave_records.index: st.session_state.schedule.loc[idx, 'Shift'] = 'Leave'
                     if 'temp_leave_dates' in st.session_state: del st.session_state['temp_leave_dates']
-                    save_schedule()
+                    save_schedule_to_db()
                     st.success("Registered. Calendar dates will highlight yellow.")
                     st.rerun()
             else:
@@ -480,7 +571,7 @@ elif page == "🏖️ Leave Planner":
                             new_row = {'Date': row['Date'], 'Name': rep_name, 'Role': rep_role, 'Shift': orig_shift}
                             st.session_state.schedule = pd.concat([st.session_state.schedule, pd.DataFrame([new_row])], ignore_index=True)
                     st.session_state.schedule.reset_index(drop=True, inplace=True)
-                    save_schedule()
+                    save_schedule_to_db()
                     if 'temp_leave_dates' in st.session_state: del st.session_state['temp_leave_dates']
                     st.success("Leave Block Approved and Matrix Updated!")
                     st.rerun()
@@ -514,7 +605,7 @@ elif page == "🏖️ Leave Planner":
                             st.toast(f"System automatically removed {other_row['Name']} from covering Shift {restored_shift}.")
                 
                 st.session_state.schedule.reset_index(drop=True, inplace=True)
-                save_schedule()
+                save_schedule_to_db()
                 st.success(f"Leave canceled. {cancel_engg} successfully restored to Shift {restored_shift}.")
                 st.rerun()
 
@@ -564,7 +655,7 @@ elif page == "🏖️ Leave Planner":
                 new_row = {'Date': target_date, 'Name': rep_name, 'Role': rep_role, 'Shift': target_shift}
                 st.session_state.schedule = pd.concat([st.session_state.schedule, pd.DataFrame([new_row])], ignore_index=True)
                 st.session_state.schedule.reset_index(drop=True, inplace=True)
-                save_schedule()
+                save_schedule_to_db()
                 st.success(f"{rep_name} deployed to cover shortfall!")
                 st.rerun()
         else: st.success("All operational shifts for the next 30 days are fully manned and healthy.")
@@ -596,7 +687,7 @@ elif page == "👥 Manpower Roster":
     if st.button("Commit Roster Updates", type="primary"):
         st.session_state.manpower = edited_df
         generate_schedule()
-        save_schedule()
+        save_schedule_to_db()
         st.success("Roster saved! Global matrices updated.")
 
     # --- ADVANCED EXCEL EXPORT COMPONENT ---
