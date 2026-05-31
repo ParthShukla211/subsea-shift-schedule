@@ -333,7 +333,7 @@ with st.sidebar:
     st.markdown("### 📡 Live Dashboard")
 
     if not active_personnel.empty:
-        personnel_str = ", ".join([f"{r['Name']}({r['Role'][:2].upper()})" for _, r in active_personnel.iterrows()])
+        personnel_str = ", ".join([f"{r['Name']}({'Sr' if r['Role'] == 'Senior' else 'Jr'})" for _, r in active_personnel.iterrows()])
         st.success(f"**🟢 Active: Shift {active_s} ({personnel_str})**")
     else:
         st.error(f"**🟣 Active: Shift {active_s} (UNMANNED)**")
@@ -419,7 +419,7 @@ if page == "📅 Monthly Calendar":
                 curr_shift_data = day_data[day_data['Shift'] == active_s]
                 visible_html += f"<div class='shift-block shift-{active_s.lower()}'><span class='shift-header'>Shift {active_s}:</span>"
                 if not curr_shift_data.empty:
-                    names = [f"{r['Name']}({r['Role'][:2].upper()})" for _, r in curr_shift_data.iterrows()]
+                    names = [f"{r['Name']}({'Sr' if r['Role'] == 'Senior' else 'Jr'})" for _, r in curr_shift_data.iterrows()]
                     visible_html += f"<span class='shift-personnel'>{', '.join(names)}</span>"
                 else: visible_html += "<span class='shift-personnel' style='color:#EF4444; font-weight:bold;'>Unmanned</span>"
                 visible_html += "</div>"
@@ -431,7 +431,7 @@ if page == "📅 Monthly Calendar":
                     if not health_ok: visible_html += f"<div class='warning-badge'>⚠️ Shift {s}: {warning_msg}</div>"
                     
                     details_html += f"<div class='shift-block shift-{s.lower()}'><span class='shift-header'>Shift {s}:</span>"
-                    names = [f"{r['Name']}({r['Role'][:2].upper()})" for _, r in shift_personnel.iterrows()]
+                    names = [f"{r['Name']}({'Sr' if r['Role'] == 'Senior' else 'Jr'})" for _, r in shift_personnel.iterrows()]
                     details_html += f"<span class='shift-personnel'>{', '.join(names) if names else 'Unmanned'}</span></div>"
                     
                 wo_personnel = day_data[day_data['Shift'] == 'WO']
@@ -716,7 +716,7 @@ elif page == "🗓️ Shift Planner":
         # Dynamically append each engineer as a selectable column
         for name in pivot_df.columns[2:]: 
             role_val = st.session_state.manpower.loc[st.session_state.manpower['Name'] == name, 'Role'].values[0]
-            role_abbr = role_val[:2].upper()
+            role_abbr = "Sr" if role_val == "Senior" else "Jr"
             col_cfg[name] = st.column_config.SelectboxColumn(
                 f"{name} ({role_abbr})", 
                 options=['A', 'B', 'C', 'WO', 'Leave', 'A+B', 'B+C', 'C+A'],
