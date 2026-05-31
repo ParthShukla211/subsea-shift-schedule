@@ -897,7 +897,7 @@ elif page == "👥 Manpower Roster":
             
             # Write Super-Title
             total_cols = len(ordered_cols) + 2 + 4 # 2 for Name/Role, 4 for Stats
-            worksheet.merge_range(0, 0, 1, total_cols - 1, f"🗓️ 🌊 SUBSEA PANEL MANPOWER MATRIX | {ex_month_name.upper()} {ex_year}", title_fmt)
+            worksheet.merge_range(0, 0, 1, total_cols - 1, f"🗓️ SUBSEA PANEL MANPOWER MATRIX | {ex_month_name.upper()} {ex_year}", title_fmt)
             
             # Write Main Headers (Row 2)
             worksheet.write(2, 0, "Engineer Name", header_fmt)
@@ -950,7 +950,7 @@ elif page == "👥 Manpower Roster":
                 b_cnt = day_shifts.count('B')
                 c_cnt = day_shifts.count('C')
                 
-                count_str = f"A:{a_cnt}\nB:{b_cnt}\nC:{c_cnt}"
+                count_str = f"A : {a_cnt}\nB : {b_cnt}\nC : {c_cnt}"
                 worksheet.write(bottom_row, col_num + 2, count_str, count_fmt)
                 
             # Write empty dashes for the stat columns at the bottom
