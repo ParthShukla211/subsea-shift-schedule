@@ -672,23 +672,27 @@ elif page == "🗓️ Shift Planner":
     
     # Filter isolating the selected month
     mask = (df_sched['Date'].apply(lambda x: x.year) == plan_year) & (df_sched['Date'].apply(lambda x: x.month) == plan_month)
-    month_data = df_sched[mask]
+    month_data = df_sched[mask].copy()
 
     if month_data.empty:
         st.warning("No data generated for this month yet.")
     else:
-        # Pivot operation to translate normalized rows into a 2D matrix
-        pivot_df = month_data.pivot_table(index=['Name', 'Role'], columns='Date', values='Shift', aggfunc='first').reset_index()
+        # Crucial Fix: Convert Dates to Strings to bypass Streamlit's TypeError dictionary key rejection
+        month_data['Date_Str'] = month_data['Date'].astype(str)
         
-        # Dynamically map SelectboxColumn across the datetime objects for strict validation
+        # Pivot operation to translate normalized rows into a 2D matrix
+        pivot_df = month_data.pivot_table(index=['Name', 'Role'], columns='Date_Str', values='Shift', aggfunc='first').reset_index()
+        
+        # Dynamically map SelectboxColumn across the string dates
         col_cfg = {
             "Name": st.column_config.TextColumn("Name", disabled=True),
             "Role": st.column_config.TextColumn("Role", disabled=True)
         }
         
-        for d in pivot_df.columns[2:]: 
-            col_cfg[d] = st.column_config.SelectboxColumn(
-                d.strftime('%d\n%a'), 
+        for d_str in pivot_df.columns[2:]: 
+            d_obj = datetime.datetime.strptime(d_str, '%Y-%m-%d').date()
+            col_cfg[d_str] = st.column_config.SelectboxColumn(
+                d_obj.strftime('%d %a'), 
                 options=['A', 'B', 'C', 'WO', 'Leave'],
                 required=True,
                 width="small"
@@ -701,7 +705,9 @@ elif page == "🗓️ Shift Planner":
         
         if st.button("Commit Master Plan", type="primary"):
             # Pandas melt operation to return the matrix back to transactional format
-            melted = edited_pivot.melt(id_vars=['Name', 'Role'], var_name='Date', value_name='Shift')
+            melted = edited_pivot.melt(id_vars=['Name', 'Role'], var_name='Date_Str', value_name='Shift')
+            melted['Date'] = pd.to_datetime(melted['Date_Str']).dt.date
+            melted = melted.drop(columns=['Date_Str'])
             
             # Remove old data for this specific month from the main schedule memory
             st.session_state.schedule = df_sched[~mask]
