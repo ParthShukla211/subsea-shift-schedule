@@ -4,156 +4,32 @@ import pandas as pd
 import datetime
 import calendar
 import io
-import os
-
-import streamlit as st
-import pandas as pd
-import datetime
-import calendar
-import io
-from sqlalchemy import text
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Subsea Panel Manpower", layout="wide", page_icon="🎛️")
-
-# --- DATABASE PERSISTENCE ENGINE ---
-# Ensure your Streamlit Cloud Secrets are set!
-conn = st.connection("postgresql", type="sql")
-
-def init_db():
-    with conn.session as s:
-        s.execute(text("""
-            CREATE TABLE IF NOT EXISTS schedule_data (
-                id SERIAL PRIMARY KEY,
-                date DATE,
-                name VARCHAR(100),
-                role VARCHAR(50),
-                shift VARCHAR(10)
-            )
-        """))
-        s.commit()
-
-def save_schedule_to_db():
-    with conn.session as s:
-        s.execute(text("TRUNCATE TABLE schedule_data"))
-        # Rename app-friendly columns back to db-friendly (lowercase)
-        df_to_save = st.session_state.schedule.rename(columns={
-            'Date': 'date', 'Name': 'name', 'Role': 'role', 'Shift': 'shift'
-        })
-        df_to_save.to_sql("schedule_data", con=s.bind, if_exists="append", index=False)
-        s.commit()
-
-def load_or_generate_schedule():
-    init_db()
-    df = conn.query("SELECT * FROM schedule_data", ttl=0)
-    if df.empty:
-        generate_schedule()
-        save_schedule_to_db()
-        st.session_state.schedule = conn.query("SELECT * FROM schedule_data", ttl=0)
-    
-    # Standardize column names for the app logic
-    df = df.rename(columns={'date': 'Date', 'name': 'Name', 'role': 'Role', 'shift': 'Shift'})
-    df['Date'] = pd.to_datetime(df['Date']).dt.date
-    st.session_state.schedule = df
-
-# --- CORE LOGIC ---
-WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-MONTH_NAMES = list(calendar.month_name)[1:]
-
-def get_shift_for_date(curr_date, week_off_day):
-    wo_idx = WEEK_DAYS.index(week_off_day)
-    curr_idx = curr_date.weekday()
-    diff = (curr_idx - wo_idx) % 7
-    if diff == 0: return 'WO'
-    elif diff in [1, 2]: return 'B'
-    elif diff in [3, 4]: return 'A'
-    elif diff in [5, 6]: return 'C'
-
-def init_default_manpower():
-    st.session_state.manpower = pd.DataFrame({
-        'Emp_ID': ['E01', 'E02', 'E03', 'E04', 'E05', 'E06', 'E07', 'E08', 'E09'],
-        'Name': ['Alice', 'Bob', 'Charlie', 'David', 'Edward', 'Frank', 'Grace', 'Harry', 'Ian'],
-        'Role': ['Senior', 'Senior', 'Senior', 'Senior', 'Senior', 'Junior', 'Junior', 'Junior', 'Junior'],
-        'Week_Off': ['Sunday', 'Tuesday', 'Thursday', 'Saturday', 'Friday', 'Monday', 'Tuesday', 'Wednesday', 'Friday']
-    })
-
-def generate_schedule():
-    today = datetime.date.today()
-    start_date = datetime.date(today.year - 1, 1, 1) 
-    dates = [start_date + datetime.timedelta(days=x) for x in range(1095)]
-    schedule_data = []
-    for d in dates:
-        for _, row in st.session_state.manpower.iterrows():
-            shift_assigned = get_shift_for_date(d, row['Week_Off'])
-            schedule_data.append({'Date': d, 'Name': row['Name'], 'Role': row['Role'], 'Shift': shift_assigned})
-    st.session_state.schedule = pd.DataFrame(schedule_data)
-
-# --- RUNTIME INITIALIZATION ---
-if 'manpower' not in st.session_state: init_default_manpower()
-if 'schedule' not in st.session_state: load_or_generate_schedule()
-
-# ... [Insert the rest of your UI Logic, CSS, and Page Routing here] ...
-# Note: Ensure you find every instance of save_schedule() in your 
-# previous code and update it to call save_schedule_to_db()
-
-# --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Subsea Panel Manpower", layout="wide", page_icon="🎛️")
-
 
 # --- LIGHT BLUE CORPORATE & DYNAMIC STATUS CSS ---
 st.markdown("""
 <style>
-    /* Main Layout */
     .block-container { padding-top: 2rem; }
-    
-    /* Deep override to force Hand/Pointer cursor on all dropdowns, date pickers, and inputs */
-    div[data-testid="stSelectbox"] *, 
-    div[data-testid="stDateInput"] *,
-    div[data-baseweb="select"], 
-    div[data-baseweb="select"] *,
-    input { 
-        cursor: pointer !important; 
-    }
-    
-    /* Calendar CSS */
+    div[data-testid="stSelectbox"] *, div[data-testid="stDateInput"] *, div[data-baseweb="select"], div[data-baseweb="select"] *, input { cursor: pointer !important; }
     .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; margin-top: 5px; }
-    
-    .cal-header { 
-        text-align: center; font-weight: 700; color: white; padding: 8px; 
-        border-radius: 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px;
-        background: linear-gradient(135deg, #3B82F6, #60A5FA);
-        box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
-    }
-    
-    .cal-day { 
-        position: relative; border: 1px solid #BFDBFE; border-top: 4px solid #93C5FD; 
-        border-radius: 6px; padding: 8px; min-height: 95px; background-color: #FFFFFF; 
-        transition: all 0.2s ease; cursor: default;
-    }
-    
+    .cal-header { text-align: center; font-weight: 700; color: white; padding: 8px; border-radius: 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; background: linear-gradient(135deg, #3B82F6, #60A5FA); box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2); }
+    .cal-day { position: relative; border: 1px solid #BFDBFE; border-top: 4px solid #93C5FD; border-radius: 6px; padding: 8px; min-height: 95px; background-color: #FFFFFF; transition: all 0.2s ease; cursor: default; }
     .cal-day-ok { border-top: 4px solid #10B981 !important; }
     .cal-day-modified { border-top: 4px solid #F59E0B !important; } 
     .cal-day-issue { border-top: 4px solid #8B5CF6 !important; } 
-    
     .cal-day-today { background-color: #EFF6FF !important; border: 2px solid #2563EB !important; box-shadow: 0 0 10px rgba(37, 99, 235, 0.15); }
     .cal-day-date { font-weight: 800; color: #1E3A8A; border-bottom: 1px solid #F3F4F6; margin-bottom: 6px; padding-bottom: 2px; font-size: 16px;}
     .cal-day.empty { background-color: transparent !important; border: none !important; box-shadow: none !important; }
-    
     .visible-content { display: flex; flex-direction: column; gap: 4px; }
     .warning-badge { background: #FAF5FF; color: #7C3AED; border: 1px dashed #8B5CF6; border-radius: 4px; font-size: 10px; padding: 3px 5px; font-weight: 800; line-height: 1.1;}
-    
-    .shift-details {
-        opacity: 0; visibility: hidden; position: absolute; top: -10px; right: calc(100% + 12px); 
-        width: max-content; min-width: 180px; background: rgba(255, 255, 255, 0.98); z-index: 100; padding: 12px;
-        border-radius: 8px; box-shadow: 0 20px 25px -5px rgba(59, 130, 246, 0.2); border: 2px solid #60A5FA; 
-        display: flex; flex-direction: column; gap: 5px; transform: translateX(15px) scale(0.95);
-        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); pointer-events: none; backdrop-filter: blur(4px);
-    }
-    
+    .shift-details { opacity: 0; visibility: hidden; position: absolute; top: -10px; right: calc(100% + 12px); width: max-content; min-width: 180px; background: rgba(255, 255, 255, 0.98); z-index: 100; padding: 12px; border-radius: 8px; box-shadow: 0 20px 25px -5px rgba(59, 130, 246, 0.2); border: 2px solid #60A5FA; display: flex; flex-direction: column; gap: 5px; transform: translateX(15px) scale(0.95); transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); pointer-events: none; backdrop-filter: blur(4px); }
     .cal-day:nth-child(7n+1) .shift-details, .cal-day:nth-child(7n+2) .shift-details { right: auto; left: calc(100% + 12px); transform: translateX(-15px) scale(0.95); }
     .cal-day:hover { z-index: 50; border-color: #3B82F6 !important; background-color: #EFF6FF !important; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);}
     .cal-day:hover .shift-details { opacity: 1; visibility: visible; transform: translateX(0) scale(1.05); }
-    
     .shift-block { font-size: 11px; padding: 4px 6px; border-radius: 4px; border: 1px solid transparent; display: flex; align-items: baseline; gap: 4px;}
     .shift-header { font-weight: 800; min-width: 45px;}
     .shift-personnel { flex-grow: 1; white-space: normal; line-height: 1.3;}
@@ -161,20 +37,13 @@ st.markdown("""
     .shift-b { background-color: #FFFBEB; color: #92400E; border-left: 3px solid #F59E0B;} 
     .shift-c { background-color: #FAF5FF; color: #581C87; border-left: 3px solid #9333EA;} 
     .shift-wo { background-color: #F8FAFC; color: #64748B; border-left: 3px solid #94A3B8; font-style: italic;} 
-    
-    /* ENHANCED MODERN SIDEBAR NAVIGATION MENU */
     .stRadio > div[role="radiogroup"] { display: flex; flex-direction: column; gap: 12px; }
-    .stRadio > div[role="radiogroup"] > label {
-        background: #FFFFFF; border: 2px solid #1E3A8A; padding: 14px 16px; border-radius: 10px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05); transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); cursor: pointer;
-    }
+    .stRadio > div[role="radiogroup"] > label { background: #FFFFFF; border: 2px solid #1E3A8A; padding: 14px 16px; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); cursor: pointer; }
     .stRadio > div[role="radiogroup"] > label > div:first-child { display: none !important; }
     .stRadio > div[role="radiogroup"] > label div[data-testid="stMarkdownContainer"] p { font-weight: 700; color: #1E3A8A; font-size: 15px; margin: 0; }
     .stRadio > div[role="radiogroup"] > label:hover { background: #EFF6FF; border-color: #2563EB; transform: translateX(6px); box-shadow: 0 4px 6px rgba(59, 130, 246, 0.1); }
     .stRadio > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked) { background: #DBEAFE !important; border: 2px solid #1E3A8A !important; box-shadow: 0 4px 10px rgba(30, 58, 138, 0.2); }
     .stRadio > div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked) div[data-testid="stMarkdownContainer"] p { color: #1E3A8A !important; }
-    
-    /* MINI CALENDAR FOR INDIVIDUAL PROFILE */
     .mini-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; padding: 10px 0; }
     .mini-cal-header { text-align: center; font-weight: 800; color: #64748B; font-size: 12px; padding-bottom: 5px; border-bottom: 2px solid #E2E8F0; text-transform: uppercase; }
     .mini-cal-day { border: 1px solid #E2E8F0; border-radius: 6px; padding: 6px; min-height: 70px; background: #FFFFFF; display: flex; flex-direction: column; gap: 3px; }
@@ -182,18 +51,42 @@ st.markdown("""
     .mini-cal-today { border: 2px solid #2563EB !important; background: #EFF6FF !important; }
     .mini-cal-date { font-size: 12px; font-weight: 800; color: #1E3A8A; align-self: flex-end; margin-bottom: 2px; }
     .mini-shift { font-size: 11px; font-weight: 800; color: white; border-radius: 4px; padding: 3px; text-align: center; width: 100%; letter-spacing: 0.5px;}
-    
-    .bg-a { background-color: #3B82F6; }
-    .bg-b { background-color: #F59E0B; }
-    .bg-c { background-color: #9333EA; }
-    .bg-wo { background-color: #94A3B8; }
-    .bg-leave { background-color: #EF4444; }
+    .bg-a { background-color: #3B82F6; } .bg-b { background-color: #F59E0B; } .bg-c { background-color: #9333EA; } .bg-wo { background-color: #94A3B8; } .bg-leave { background-color: #EF4444; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- ENGINE FUNCTIONS ---
+# --- GOOGLE SHEETS PERSISTENCE ENGINE ---
 WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 MONTH_NAMES = list(calendar.month_name)[1:]
+
+def get_gsheet_client():
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    return gspread.authorize(creds)
+
+def save_schedule_to_db():
+    client = get_gsheet_client()
+    sheet = client.open("Subsea_Schedule_DB").sheet1
+    sheet.clear()
+    df_to_save = st.session_state.schedule.copy()
+    df_to_save['Date'] = df_to_save['Date'].astype(str) # Convert Date to string for JSON Google Sheets
+    data_to_write = [df_to_save.columns.values.tolist()] + df_to_save.values.tolist()
+    sheet.update(range_name='A1', values=data_to_write)
+
+def load_or_generate_schedule():
+    try:
+        client = get_gsheet_client()
+        sheet = client.open("Subsea_Schedule_DB").sheet1
+        data = sheet.get_all_records()
+        if not data:
+            raise ValueError("Sheet is empty")
+        df = pd.DataFrame(data)
+        df['Date'] = pd.to_datetime(df['Date']).dt.date 
+        st.session_state.schedule = df
+    except Exception as e:
+        generate_schedule()
+        save_schedule_to_db()
 
 def get_shift_for_date(curr_date, week_off_day):
     wo_idx = WEEK_DAYS.index(week_off_day)
@@ -222,21 +115,6 @@ def generate_schedule():
             shift_assigned = get_shift_for_date(d, row['Week_Off'])
             schedule_data.append({'Date': d, 'Name': row['Name'], 'Role': row['Role'], 'Shift': shift_assigned})
     st.session_state.schedule = pd.DataFrame(schedule_data)
-
-# --- CLOUD PERSISTENCE ENGINE ---
-def save_schedule_to_db():
-    """Writes the current RAM state to the server hard drive."""
-    st.session_state.schedule.to_csv("subsea_schedule_data.csv", index=False)
-
-def load_or_generate_schedule():
-    """Boots from the hard drive if data exists, otherwise generates fresh."""
-    if os.path.exists("subsea_schedule_data.csv"):
-        df = pd.read_csv("subsea_schedule_data.csv")
-        df['Date'] = pd.to_datetime(df['Date']).dt.date 
-        st.session_state.schedule = df
-    else:
-        generate_schedule()
-        save_schedule_to_db()
 
 if 'manpower' not in st.session_state: init_default_manpower()
 if 'schedule' not in st.session_state: load_or_generate_schedule()
