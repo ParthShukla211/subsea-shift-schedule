@@ -865,14 +865,14 @@ elif page == "👥 Manpower Roster":
             
         stats_df = pd.DataFrame(stats_data)
         
-        # Excel Generation Engine
+# Excel Generation Engine
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             workbook  = writer.book
             worksheet = workbook.add_worksheet(f'{ex_month_name} Matrix')
             
-            # Freeze panes (Locks the top 4 rows and first 2 columns for easy scrolling)
-            worksheet.freeze_panes(4, 2)
+            # Freeze panes (Locks the top 3 rows and first 2 columns for easy scrolling)
+            worksheet.freeze_panes(3, 2)
             
             # FORMATTING DICTIONARIES
             title_fmt = workbook.add_format({'bold': True, 'font_size': 18, 'font_color': '#FFFFFF', 'bg_color': '#1E3A8A', 'align': 'center', 'valign': 'vcenter', 'border': 1})
@@ -905,51 +905,57 @@ elif page == "👥 Manpower Roster":
             worksheet.set_column(0, 0, 20) 
             worksheet.set_column(1, 1, 10) 
             
-            # Write Manpower Summary Row Headers (Row 3)
-            worksheet.write(3, 0, "Daily Shift Count", count_fmt)
-            worksheet.write(3, 1, "Manpower", count_fmt)
-            worksheet.set_row(3, 40) # Make row taller to fit multi-line count text
-            
-            # Date Headers and Daily Manpower Counts
+            # Date Headers
             for col_num, date_str in enumerate(ordered_cols):
                 worksheet.write(2, col_num + 2, date_str, header_fmt)
                 worksheet.set_column(col_num + 2, col_num + 2, 7)
                 
-                # Calculate daily shift counts directly from transactional month_data
+            # Stat Headers
+            stat_start_col = len(ordered_cols) + 2
+            stat_headers = ['Total\nShifts', 'Double\nShifts', 'Leaves\nTaken', 'WO\nTaken']
+            for i, hdr in enumerate(stat_headers):
+                worksheet.write(2, stat_start_col + i, hdr, stat_hdr_fmt)
+                worksheet.set_column(stat_start_col + i, stat_start_col + i, 9)
+                
+            # Populate Engineer Data (Starts at Row 3)
+            for row_num, row_data in pivot_df.iterrows():
+                # Write Name & Role with specific styling
+                worksheet.write(row_num + 3, 0, row_data['Name'], name_fmt)
+                r_fmt = sr_fmt if row_data['Role'] == 'Senior' else jr_fmt
+                worksheet.write(row_num + 3, 1, row_data['Role'], r_fmt)
+                
+                # Write Calendar Shifts
+                for col_num, date_col in enumerate(ordered_cols):
+                    val = row_data[date_col]
+                    fmt = shift_colors.get(val, shift_colors['Unmanned'])
+                    worksheet.write(row_num + 3, col_num + 2, val, fmt)
+                    
+                # Write Analytics
+                worksheet.write(row_num + 3, stat_start_col, stats_df.iloc[row_num]['Total Shifts'], stat_val_fmt)
+                worksheet.write(row_num + 3, stat_start_col + 1, stats_df.iloc[row_num]['Double Shifts'], stat_val_fmt)
+                worksheet.write(row_num + 3, stat_start_col + 2, stats_df.iloc[row_num]['Leaves Taken'], stat_val_fmt)
+                worksheet.write(row_num + 3, stat_start_col + 3, stats_df.iloc[row_num]['WO Taken'], stat_val_fmt)
+            
+            # --- DAILY MANPOWER COUNT AT THE BOTTOM ---
+            bottom_row = len(pivot_df) + 3 # Calculates the exact row after all engineers
+            
+            worksheet.write(bottom_row, 0, "Daily Shift Count", count_fmt)
+            worksheet.write(bottom_row, 1, "Manpower", count_fmt)
+            worksheet.set_row(bottom_row, 40) # Make row taller to fit multi-line count text
+            
+            # Calculate and write counts for each day
+            for col_num, date_str in enumerate(ordered_cols):
                 day_shifts = month_data[month_data['Date_Col'] == date_str]['Shift'].tolist()
                 a_cnt = day_shifts.count('A')
                 b_cnt = day_shifts.count('B')
                 c_cnt = day_shifts.count('C')
                 
                 count_str = f"A:{a_cnt}\nB:{b_cnt}\nC:{c_cnt}"
-                worksheet.write(3, col_num + 2, count_str, count_fmt)
+                worksheet.write(bottom_row, col_num + 2, count_str, count_fmt)
                 
-            # Stat Headers and empty dash for Row 3
-            stat_start_col = len(ordered_cols) + 2
-            stat_headers = ['Total\nShifts', 'Double\nShifts', 'Leaves\nTaken', 'WO\nTaken']
-            for i, hdr in enumerate(stat_headers):
-                worksheet.write(2, stat_start_col + i, hdr, stat_hdr_fmt)
-                worksheet.write(3, stat_start_col + i, "-", count_fmt)
-                worksheet.set_column(stat_start_col + i, stat_start_col + i, 9)
-                
-            # Populate Engineer Data (Starts at Row 4)
-            for row_num, row_data in pivot_df.iterrows():
-                # Write Name & Role with specific styling
-                worksheet.write(row_num + 4, 0, row_data['Name'], name_fmt)
-                r_fmt = sr_fmt if row_data['Role'] == 'Senior' else jr_fmt
-                worksheet.write(row_num + 4, 1, row_data['Role'], r_fmt)
-                
-                # Write Calendar Shifts
-                for col_num, date_col in enumerate(ordered_cols):
-                    val = row_data[date_col]
-                    fmt = shift_colors.get(val, shift_colors['Unmanned'])
-                    worksheet.write(row_num + 4, col_num + 2, val, fmt)
-                    
-                # Write Analytics
-                worksheet.write(row_num + 4, stat_start_col, stats_df.iloc[row_num]['Total Shifts'], stat_val_fmt)
-                worksheet.write(row_num + 4, stat_start_col + 1, stats_df.iloc[row_num]['Double Shifts'], stat_val_fmt)
-                worksheet.write(row_num + 4, stat_start_col + 2, stats_df.iloc[row_num]['Leaves Taken'], stat_val_fmt)
-                worksheet.write(row_num + 4, stat_start_col + 3, stats_df.iloc[row_num]['WO Taken'], stat_val_fmt)
+            # Write empty dashes for the stat columns at the bottom
+            for i in range(4):
+                worksheet.write(bottom_row, stat_start_col + i, "-", count_fmt)
                     
         excel_data = output.getvalue()
         
