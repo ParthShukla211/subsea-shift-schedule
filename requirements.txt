@@ -3,3 +3,5 @@ pandas
 xlsxwriter
 psycopg2-binary
 sqlalchemy
+gspread
+oauth2client
