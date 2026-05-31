@@ -55,7 +55,37 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- GOOGLE SHEETS MULTI-TAB PERSISTENCE ENGINE ---
+# =========================================================
+# SECURITY PORTAL (AUTHENTICATION)
+# =========================================================
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.markdown("<h1 style='text-align: center; color: #1E3A8A; margin-top: 10vh;'>🎛️ Subsea Panel Access</h1>", unsafe_allow_html=True)
+    
+    col_spacer1, col_login, col_spacer2 = st.columns([1, 1.2, 1])
+    with col_login:
+        with st.form("login_form"):
+            st.markdown("<h3 style='text-align: center; color: #3B82F6;'>Secure Login</h3>", unsafe_allow_html=True)
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submit = st.form_submit_button("Unlock App", type="primary", use_container_width=True)
+            
+            if submit:
+                if username == "Subsea" and password == "Subsea@05":
+                    st.session_state.authenticated = True
+                    st.rerun()  # Instantly reloads the script and bypasses this block
+                else:
+                    st.error("❌ Authentication Failed: Invalid username or password.")
+    
+    # st.stop() acts as a strict firewall. Nothing below this line runs if not authenticated.
+    st.stop()
+
+
+# =========================================================
+# GOOGLE SHEETS MULTI-TAB PERSISTENCE ENGINE 
+# =========================================================
 WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 MONTH_NAMES = list(calendar.month_name)[1:]
 SPREADSHEET_ID = "1KD0tl3MjCumuovdLaN_hS2f_dDBZKNXyuDOUiuKV-jk"
@@ -155,7 +185,6 @@ def sync_roster_updates(old_df, new_df):
             if row['Date'] >= today:
                 for name, old_wo, new_wo in changed_wo_names:
                     if row['Name'] == name:
-                        # Only update if the current shift is their OLD baseline (meaning they haven't booked leave)
                         old_baseline_shift = get_shift_for_date(row['Date'], old_wo)
                         if row['Shift'] == old_baseline_shift:
                             new_baseline_shift = get_shift_for_date(row['Date'], new_wo)
@@ -317,6 +346,11 @@ with st.sidebar:
     st.markdown("### 🌊 Navigation")
     
     page = st.radio("Select Module", ["📅 Monthly Calendar", "🔄 Shift Exchange", "🏖️ Leave Planner", "👥 Manpower Roster"], label_visibility="collapsed")
+    
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    if st.button("🚪 Logout", use_container_width=True):
+        st.session_state.authenticated = False
+        st.rerun()
 
 # =========================================================
 # MAIN CONTENT ROUTING
